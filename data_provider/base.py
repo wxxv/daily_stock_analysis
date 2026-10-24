@@ -3952,6 +3952,7 @@ class DataFetcherManager:
         market: str,
         budget_seconds: Optional[float] = None,
         analysis_target: Optional[AnalysisTarget] = None,
+        realtime_quote: Any = None,
     ) -> Dict[str, Any]:
         """HK/US fundamental aggregation via yfinance.
 
@@ -4007,7 +4008,11 @@ class DataFetcherManager:
         # Valuation: reuse realtime quote payload — yfinance returns pe/pb in the
         # same shape as AkShare, so the existing block formatter still works.
         valuation_timeout = min(fetch_timeout, stage_timeout) if stage_timeout > 0 else 0
-        if valuation_timeout > 0:
+        if valuation_timeout > 0 and realtime_quote is not None:
+            # The pipeline already fetched this quote; leave the stage budget
+            # for statements instead of repeating a potentially slow fallback.
+            quote_payload, valuation_err, valuation_ms = realtime_quote, None, 0
+        elif valuation_timeout > 0:
             quote_payload, valuation_err, valuation_ms = self._run_with_retry(
                 lambda: self.get_realtime_quote(stock_code, **({"analysis_target": analysis_target} if analysis_target is not None else {})),
                 valuation_timeout,
@@ -4296,7 +4301,7 @@ class DataFetcherManager:
         self,
         stock_code: str,
         budget_seconds: Optional[float] = None,
-        *, analysis_target: Optional[AnalysisTarget] = None,
+        *, analysis_target: Optional[AnalysisTarget] = None, realtime_quote: Any = None,
     ) -> Dict[str, Any]:
         """
         Aggregate fundamental blocks with fail-open semantics.
@@ -4319,6 +4324,7 @@ class DataFetcherManager:
                 market=market,
                 budget_seconds=budget_seconds,
                 **({"analysis_target": analysis_target} if analysis_target is not None else {}),
+                **({"realtime_quote": realtime_quote} if realtime_quote is not None else {}),
             )
 
         stage_timeout = float(

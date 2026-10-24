@@ -20,6 +20,7 @@ from typing import Optional, Dict, Any, List, Tuple, Callable, Union
 
 import litellm
 from json_repair import repair_json
+from src.reports.report_time import format_report_time
 from litellm import Router
 
 from src.agent.llm_adapter import (
@@ -1469,6 +1470,31 @@ def _apply_hold_watch_dashboard(
     position_advice["no_position"] = no_position
     position_advice["has_position"] = has_position
 
+    # A guarded hold must also invalidate the model's previously executable buy plan.
+    battle = dashboard.setdefault("battle_plan", {})
+    if not isinstance(battle, dict):
+        battle = {}
+        dashboard["battle_plan"] = battle
+    battle["position_strategy"] = {
+        "suggested_position": (
+            "空仓暂不建仓；已有持仓按关键支撑控制风险"
+            if language == "zh" else "No new position; manage existing holdings against key support"
+        ),
+        "entry_plan": no_position,
+        "risk_control": has_position,
+    }
+    sniper = battle.get("sniper_points")
+    if isinstance(sniper, dict):
+        pending = "暂不执行买入，确认后重新评估" if language == "zh" else "No entry; reassess after confirmation"
+        for field in ("ideal_buy", "secondary_buy"):
+            if field in sniper:
+                sniper[field] = pending
+    battle["action_checklist"] = [reason, no_position, has_position]
+    phase_decision = dashboard.get("phase_decision")
+    if isinstance(phase_decision, dict):
+        phase_decision["immediate_action"] = no_position
+    result.analysis_summary = core["one_sentence"]
+
     stability = {
         "applied": True,
         "reason": reason,
@@ -1505,14 +1531,14 @@ def _downgrade_buy_without_capital_flow(
     if language == "zh":
         advice = "持有观察"
         reason = f"{status_text}，买入结论缺少资金面确认，先按观察处理。"
-        no_position = "空仓先不追买，等待资金流恢复、支撑确认或有效突破后再行动。"
-        has_position = "持仓以关键支撑为风控线，资金流恢复前控制仓位。"
+        no_position = "空仓暂不建仓；资金面证据未确认，待补充可验证证据并确认支撑或突破后重新评估。"
+        has_position = "持仓以关键支撑为风控线，证据不完整时控制仓位。"
         confidence = "低"
     else:
         advice = "Hold and watch"
         reason = f"{status_text}; the buy call lacks capital-flow confirmation, so treat it as watch-only."
-        no_position = "Do not chase; wait for capital-flow recovery, support confirmation, or a valid breakout."
-        has_position = "Use key support as the risk line and keep position size controlled until capital flow recovers."
+        no_position = "No new position; reassess after verifiable flow evidence and support or breakout confirmation."
+        has_position = "Use key support as the risk line and control exposure while evidence is incomplete."
         confidence = "Low"
 
     result.decision_type = "hold"
@@ -4410,6 +4436,15 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
             context.get("market_phase_context"),
             report_language=report_language,
         )
+        timing_text = format_report_time(context.get("report_time"), report_language)
+        if timing_text:
+            prompt += f"\n{timing_text}\n"
+            prompt += (
+                "Use only the supplied next trading date. If unavailable, state it is unconfirmed; "
+                "do not infer dates from weekdays. Daily-bar dates and generation dates differ.\n"
+                if english else
+                "下一交易日只能使用上述交易日历日期；待确认时不得自行推算。日线日期与生成日期分别表述，休市不得描述为今日盘中走势。\n"
+            )
         daily_market_context_section = format_daily_market_context_prompt_section(
             context.get("daily_market_context"),
             report_language=report_language,
@@ -5188,7 +5223,7 @@ Output the complete Decision Dashboard in JSON format."""
         if realtime:
             snapshot.update({
                 "price": self._format_price(realtime.get('price')),
-                "volume_ratio": realtime.get('volume_ratio', 'N/A'),
+                "volume_ratio": realtime.get('volume_ratio') if realtime.get('volume_ratio') is not None else 'N/A',
                 "turnover_rate": self._format_percent(realtime.get('turnover_rate')),
                 "source": getattr(realtime.get('source'), 'value', realtime.get('source', 'N/A')),
             })

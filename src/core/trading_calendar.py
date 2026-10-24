@@ -236,6 +236,14 @@ def get_market_now(
     return current_time.astimezone(tz)
 
 
+def get_report_now(stock_codes: Optional[List[str]] = None) -> datetime:
+    """Use the single portfolio market's clock, or the default CN report clock."""
+    markets = {get_market_for_stock(code) for code in (stock_codes or [])}
+    markets.discard(None)
+    market = next(iter(markets)) if len(markets) == 1 else "cn"
+    return get_market_now(market)
+
+
 def get_effective_trading_date(
     market: Optional[str], current_time: Optional[datetime] = None
 ) -> date:

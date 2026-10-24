@@ -14,7 +14,6 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from inspect import getattr_static
 from typing import Optional, Dict, Any, List
 
@@ -25,6 +24,10 @@ from src.config import get_config
 from src.report_language import normalize_report_language
 from src.search_service import SearchService
 from src.core.market_profile import get_profile, MarketProfile
+from src.core.trading_calendar import get_market_now, get_effective_trading_date
+from src.core.trading_calendar import build_market_phase_context
+from src.market_phase_prompt import format_market_phase_prompt_section
+from src.reports.news_sources import format_news_sources
 from src.core.market_strategy import get_market_strategy_blueprint
 from src.llm.backend_registry import (
     LOCAL_CLI_GENERATION_BACKEND_IDS,
@@ -72,9 +75,10 @@ class MarketIndex:
     volume: float = 0.0          # 成交量（手）
     amount: float = 0.0          # 成交额（元）
     amplitude: float = 0.0       # 振幅(%)
+    date: Optional[str] = None   # 数据源提供的行情日期；不能用抓取时间代替
     
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             'code': self.code,
             'name': self.name,
             'current': self.current,
@@ -87,6 +91,9 @@ class MarketIndex:
             'amount': self.amount,
             'amplitude': self.amplitude,
         }
+        if self.date:
+            result['date'] = self.date
+        return result
 
 
 @dataclass
@@ -556,11 +563,14 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         Returns:
             MarketOverview: 市场概览数据对象
         """
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = get_effective_trading_date(self.region).isoformat()
         overview = MarketOverview(date=today)
         
         # 1. 获取主要指数行情（按 region 切换 A 股/美股）
         overview.indices = self._get_main_indices()
+        source_dates = {index.date for index in overview.indices if index.date}
+        if len(source_dates) == 1 and all(index.date for index in overview.indices):
+            overview.date = next(iter(source_dates))
 
         # 2. 获取涨跌统计（A 股有，美股无等效数据）
         if self.profile.has_market_stats:
@@ -601,7 +611,8 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                         prev_close=item['prev_close'],
                         volume=item['volume'],
                         amount=item['amount'],
-                        amplitude=item['amplitude']
+                        amplitude=item['amplitude'],
+                        date=item.get('date'),
                     )
                     indices.append(index)
 
@@ -751,9 +762,8 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             # 根据 region 设置搜索上下文名称，避免美股搜索被解读为 A 股语境
             market_name = market_names.get(self.region, "大盘")
             for query in search_queries:
-                response = self.search_service.search_stock_news(
-                    stock_code="market",
-                    stock_name=market_name,
+                response = self.search_service.search_topic_news(
+                    topic=market_name,
                     max_results=3,
                     focus_keywords=query.split()
                 )
@@ -765,6 +775,16 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                         len(response.results),
                     )
             
+            unique_news = []
+            seen_news = set()
+            for item in all_news:
+                key = self._get_news_field(item, "url") or (
+                    self._get_news_field(item, "title"), self._get_news_field(item, "published_date")
+                )
+                if key not in seen_news:
+                    seen_news.add(key)
+                    unique_news.append(item)
+            all_news = unique_news
             logger.info(
                 "[大盘] %s action=search_market_news status=success count=%d",
                 self._log_context(),
@@ -1034,7 +1054,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 "green_up",
             ),
             "title": title,
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": get_market_now(self.region).isoformat(),
             "date": overview.date,
             "market_scope": self._get_market_scope_name(language),
             "indices": [idx.to_dict() for idx in overview.indices],
@@ -1172,7 +1192,21 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 )
                 review = f"{review.rstrip()}\n\n{fallback_heading}\n{sector_block}\n"
 
+        generated = get_market_now(self.region).isoformat(timespec="seconds")
+        timing = (f"Generated: {generated} | Quote reference session: {overview.date}"
+                  if self._get_review_language() == "en" else
+                  f"生成时间：{generated} | 行情参考交易日：{overview.date}")
+        review = f"{review.rstrip()}\n\n> {timing}\n"
+        news_block = self._build_news_sources_block(news or [], self._get_review_language())
+        if news_block:
+            review = f"{review.rstrip()}\n\n{news_block}\n"
         return review
+
+    def _build_news_sources_block(self, news: List, language: str) -> str:
+        return format_news_sources([
+            {**self._normalize_news_item(item), "url": self._get_news_field(item, "url")}
+            for item in news[:8]
+        ], language)
 
     @staticmethod
     def _insert_after_section(text: str, heading_pattern: str, block: str) -> str:
@@ -1369,6 +1403,10 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 f"{self._format_optional_number(idx.open)} | {self._format_optional_number(idx.high)} | "
                 f"{self._format_optional_number(idx.low)} | {self._format_optional_pct(idx.amplitude)} | {amount_str} |"
             )
+        missing_date = "unavailable" if self._get_review_language() == "en" else "未提供"
+        date_label = "Source quote dates" if self._get_review_language() == "en" else "数据源行情日期"
+        source_dates = "；".join(f"{idx.name}: {idx.date or missing_date}" for idx in overview.indices)
+        lines.extend(["", f"> {date_label}: {source_dates}"])
         return "\n".join(lines)
 
     def _build_sector_block(self, overview: MarketOverview) -> str:
@@ -1652,6 +1690,9 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
     def _build_review_prompt(self, overview: MarketOverview, news: List) -> str:
         """构建复盘报告 Prompt"""
         review_language = self._get_review_language()
+        phase_text = format_market_phase_prompt_section(
+            build_market_phase_context(market=self.region).to_dict(), report_language=review_language
+        )
         # Korean reuses the English structural template but the model is told to
         # write the entire shell, headings, guidance and conclusion in Korean.
         shell_language_label = "Korean (한국어)" if self._get_output_language() == "ko" else "English"
@@ -1797,6 +1838,8 @@ Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
 
 ## Date
 {overview.date}
+Quote reference session; generated at {get_market_now(self.region).isoformat()}. Source dates are listed per index below. Intraday data may be incomplete; do not invent today's trading activity when using an earlier session.
+{phase_text}
 
 ## Major Indices
 {indices_placeholder}
@@ -1851,6 +1894,8 @@ Output the report content directly, no extra commentary.
 
 ## 日期
 {overview.date}
+以上为行情参考交易日；生成时间为 {get_market_now(self.region).isoformat()}。各指数实际日期见数据源时点；盘中数据可能尚未完成，使用较早交易日时不得伪造生成当天走势。
+{phase_text}
 
 ## 主要指数
 {indices_placeholder}
@@ -1957,7 +2002,7 @@ Output the report content directly, no extra commentary.
             report = f"""## {overview.date} {market_name}
 
 ### 1. Market Summary
-Today's {self._get_market_scope_name(template_language)} showed **{market_mood}**.
+Reference session {overview.date}: {self._get_market_scope_name(template_language)} showed **{market_mood}**.
 
 ### 2. Major Indices
 {indices_text or "- No index data available"}
@@ -1969,9 +2014,10 @@ Market conditions can change quickly. The data above is for reference only and d
 {self._get_strategy_markdown_block(template_language)}
 
 ---
-*Review Time: {datetime.now().strftime('%H:%M')}*
+*Review Time: {get_market_now(self.region).strftime('%Y-%m-%d %H:%M %Z')}*
 """
-            return report
+            news_block = self._build_news_sources_block(news, template_language)
+            return f"{report.rstrip()}\n\n{news_block}\n" if news_block else report
 
         market_labels = {"cn": "A股", "us": "美股", "hk": "港股", "jp": "日股", "kr": "韩股"}
         market_label = market_labels.get(self.region, "A股")
@@ -2012,9 +2058,10 @@ Market conditions can change quickly. The data above is for reference only and d
             if self.profile.has_market_stats
             else ""
         )
+        news_block = self._build_news_sources_block(news, template_language)
         return f"""## {overview.date} 大盘复盘
 
-> 今日{market_label}市场整体呈现**{market_mood}**态势，优先观察{summary_focus}。
+> 参考交易日 {overview.date}，{market_label}市场整体呈现**{market_mood}**态势，优先观察{summary_focus}。
 
 ### 一、盘面总览
 {market_summary_block}
@@ -2033,7 +2080,9 @@ Market conditions can change quickly. The data above is for reference only and d
 - 市场有风险，投资需谨慎。以上数据仅供参考，不构成投资建议。
 
 ---
-*复盘时间: {datetime.now().strftime('%H:%M')}*
+*复盘时间: {get_market_now(self.region).strftime('%Y-%m-%d %H:%M %Z')}*
+
+{news_block}
 """
     
     def _run_daily_review_parts(self) -> MarketLightReviewResult:

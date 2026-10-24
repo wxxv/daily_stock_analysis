@@ -2,7 +2,7 @@
 {% macro market_snapshot(result) %}
 {% set snapshot = result.market_snapshot if result.market_snapshot else {} %}
 {% if snapshot %}
-### 📈 {{ labels.market_snapshot_heading }}
+### 📈 {{ labels.market_snapshot_heading }} ({{ snapshot.get('date') or 'N/A' }})
 
 | {{ labels.close_label }} | {{ labels.prev_close_label }} | {{ labels.open_label }} | {{ labels.high_label }} | {{ labels.low_label }} | {{ labels.change_pct_label }} | {{ labels.change_amount_label }} | {{ labels.amplitude_label }} | {{ labels.volume_label }} | {{ labels.amount_label }} |
 |------|------|------|------|------|-------|-------|------|--------|--------|

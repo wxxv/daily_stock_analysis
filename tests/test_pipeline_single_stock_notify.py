@@ -149,8 +149,8 @@ class TestPipelineSingleStockNotify(unittest.TestCase):
         pipeline.analyze_stock = MagicMock(return_value=_make_result("600519"))
         pipeline.notifier = _TrackingNotifier()
 
-        with patch("src.core.pipeline.datetime") as mock_datetime:
-            mock_datetime.now.return_value = self._FROZEN_REPORT_TIME
+        with patch("src.core.pipeline.get_report_now") as mock_report_now:
+            mock_report_now.return_value = self._FROZEN_REPORT_TIME
             result = pipeline.process_single_stock(
                 code="600519",
                 skip_analysis=False,
@@ -180,8 +180,8 @@ class TestPipelineSingleStockNotify(unittest.TestCase):
         pipeline.notifier = _TrackingNotifier()
         pipeline.notifier.is_available.return_value = False
 
-        with patch("src.core.pipeline.datetime") as mock_datetime:
-            mock_datetime.now.return_value = self._FROZEN_REPORT_TIME
+        with patch("src.core.pipeline.get_report_now") as mock_report_now:
+            mock_report_now.return_value = self._FROZEN_REPORT_TIME
             result = pipeline.process_single_stock(
                 code="600519",
                 skip_analysis=False,

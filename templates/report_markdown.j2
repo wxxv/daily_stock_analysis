@@ -2,6 +2,8 @@
 # 🎯 {{ report_date }} {{ labels.dashboard_title }}
 
 > {{ labels.analyzed_prefix }} **{{ results|length }}** {{ labels.stock_unit }} | 🟢{{ labels.buy_label }}:{{ buy_count }} 🟡{{ labels.watch_label }}:{{ hold_count }} 🔴{{ labels.sell_label }}:{{ sell_count }}
+
+> {{ labels.position_scope_note }}
 {% if market_status_line %}
 {{ market_status_line }}
 {% endif %}
@@ -104,8 +106,8 @@
 
 {% set vol_data = data_persp.get('volume_analysis', {}) %}
 {% if vol_data %}
-**{{ labels.volume_label }}**: {{ labels.volume_ratio_label }} {{ vol_data.get('volume_ratio', 'N/A') }} ({{ vol_data.get('volume_status', '') }}) | {{ labels.turnover_rate_label }} {{ vol_data.get('turnover_rate', 'N/A') }}%
-💡 *{{ vol_data.get('volume_meaning', '') }}*
+**{{ labels.volume_label }}**: {{ labels.volume_ratio_label }} {{ vol_data.get('volume_ratio') if vol_data.get('volume_ratio') is not none else 'N/A' }} ({{ vol_data.get('volume_status') or 'N/A' }}) | {{ labels.turnover_rate_label }} {{ vol_data.get('turnover_rate') ~ '%' if vol_data.get('turnover_rate') is not none else 'N/A' }}
+{% if vol_data.get('volume_meaning') %}💡 *{{ vol_data.volume_meaning }}*{% endif %}
 {% endif %}
 
 {% set chip_data = data_persp.get('chip_structure', {}) %}
@@ -246,6 +248,10 @@
 {% if result.data_sources and result.data_sources|trim %}
 *📋 {{ labels.data_sources_label }}：{{ result.data_sources|trim }}*
 {% endif %}
+
+{{ format_report_time(dashboard.get('report_time'), report_language) }}
+
+{{ format_news_sources(dashboard.get('news_sources'), report_language) }}
 
 ---
 {% endfor %}

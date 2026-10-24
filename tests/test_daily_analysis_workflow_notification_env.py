@@ -47,6 +47,15 @@ def test_daily_analysis_maps_p0_notification_env_keys() -> None:
         assert key in env
 
 
+def test_daily_analysis_preserves_fundamental_defaults_and_accepts_budget_overrides() -> None:
+    env = _load_daily_analysis_env()
+    assert "|| 'true'" in env["ENABLE_FUNDAMENTAL_PIPELINE"]
+    for key in ("ENABLE_FUNDAMENTAL_PIPELINE", "FUNDAMENTAL_STAGE_TIMEOUT_SECONDS",
+                "FUNDAMENTAL_FETCH_TIMEOUT_SECONDS"):
+        assert f"vars.{key}" in env[key]
+        assert f"secrets.{key}" in env[key]
+
+
 def test_daily_analysis_maps_p3_notification_route_env_keys() -> None:
     env = _load_daily_analysis_env()
 

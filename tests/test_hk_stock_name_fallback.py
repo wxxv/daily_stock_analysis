@@ -9,7 +9,10 @@ import sys
 import threading
 import time
 import unittest
+from datetime import datetime
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
+from zoneinfo import ZoneInfo
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -50,6 +53,10 @@ def _make_spot_em_df():
         '最新价': 370.0,
         '涨跌幅': 1.5,
         '涨跌额': 5.5,
+        '今开': 366.0,
+        '最高': 372.0,
+        '最低': 363.0,
+        '昨收': 364.5,
         '成交量': 10000,
         '成交额': 3700000.0,
         '量比': 1.2,
@@ -68,7 +75,8 @@ def _make_spot_df():
     """Simulate stock_hk_spot() return value (sina source)."""
     return pd.DataFrame([{
         '代码': '00700',
-        '名称': '腾讯控股',
+        '中文名称': '腾讯控股',
+        '日期时间': '2026-10-23 16:08:19',
         '最新价': 368.0,
         '涨跌额': 3.5,
         '涨跌幅': 0.96,
@@ -112,6 +120,8 @@ class TestHKRealtimeFallback(unittest.TestCase):
         self.assertIsNotNone(quote)
         self.assertEqual(quote.name, "腾讯控股")
         self.assertAlmostEqual(quote.price, 370.0)
+        self.assertEqual((quote.open_price, quote.high, quote.low, quote.pre_close),
+                         (366.0, 372.0, 363.0, 364.5))
 
     @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
     def test_repeated_em_lookup_uses_hot_cache_without_network_delay(self, mock_cb):
@@ -179,7 +189,54 @@ class TestHKRealtimeFallback(unittest.TestCase):
         self.assertIsNotNone(quote)
         self.assertEqual(quote.name, "腾讯控股")
         self.assertAlmostEqual(quote.price, 368.0)
+        self.assertEqual((quote.open_price, quote.high, quote.low, quote.pre_close),
+                         (365.0, 370.0, 364.0, 364.5))
+        self.assertEqual(quote.source.value, 'akshare_sina')
+        self.assertEqual(quote.provider_timestamp, '2026-10-23T16:08:19+08:00')
         ak_mock.stock_hk_spot.assert_called_once()
+
+    @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
+    def test_fallback_ohlc_reaches_daily_context_and_snapshot(self, mock_cb):
+        """Use actual adapter and pipeline code; mock only the upstream transport."""
+        from src.analyzer import GeminiAnalyzer
+        from src.core.pipeline import StockAnalysisPipeline
+        from src.stock_analyzer import TrendAnalysisResult
+
+        mock_cb.return_value = _DummyCircuitBreaker()
+        ak_mock = MagicMock()
+        ak_mock.stock_hk_spot_em.side_effect = RuntimeError("fixture primary outage")
+        ak_mock.stock_hk_spot.return_value = _make_spot_df()
+        with patch.dict(sys.modules, {"akshare": ak_mock}):
+            quote = self.fetcher._get_hk_realtime_quote("HK00700")
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.config = SimpleNamespace(enable_realtime_technical_indicators=True, report_language="zh")
+        pipeline.search_service = SimpleNamespace(news_window_days=3)
+        context = {"code": "HK00700", "date": "2026-10-22", "today": {
+            "date": "2026-10-22", "close": 364.5, "volume": 10000,
+        }, "yesterday": {"close": 360.0}}
+        now = datetime(2026, 10, 23, 16, 10, tzinfo=ZoneInfo("Asia/Hong_Kong"))
+        with patch("src.core.pipeline.get_market_now", side_effect=lambda market, current_time=None: current_time or now):
+            enhanced = pipeline._enhance_context(context, quote, None,
+                TrendAnalysisResult(code="HK00700", ma5=366, ma10=364, ma20=362), fundamental_context={})
+        snapshot = GeminiAnalyzer.__new__(GeminiAnalyzer)._build_market_snapshot(enhanced)
+        self.assertEqual((snapshot['open'], snapshot['high'], snapshot['low']), ('365.00', '370.00', '364.00'))
+        self.assertEqual(snapshot['prev_close'], '364.50')
+        self.assertEqual(snapshot['change_amount'], '3.50')
+        self.assertEqual(snapshot['amplitude'], '1.65%')
+        self.assertEqual(snapshot['date'], '2026-10-23')
+        self.assertEqual(snapshot['source'], 'akshare_sina')
+        self.assertEqual(context['yesterday']['close'], 360.0)
+
+    @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
+    def test_missing_ohlc_stays_missing_instead_of_copying_latest_price(self, mock_cb):
+        mock_cb.return_value = _DummyCircuitBreaker()
+        ak_mock = MagicMock()
+        ak_mock.stock_hk_spot_em.return_value = _make_spot_em_df().drop(columns=['今开', '最高', '最低', '昨收'])
+        with patch.dict(sys.modules, {"akshare": ak_mock}):
+            quote = self.fetcher._get_hk_realtime_quote("HK00700")
+        self.assertEqual(quote.price, 370.0)
+        self.assertEqual((quote.open_price, quote.high, quote.low, quote.pre_close), (None, None, None, None))
+        self.assertIsNone(quote.provider_timestamp)
 
     @patch("data_provider.akshare_fetcher.get_realtime_circuit_breaker")
     def test_parallel_em_failure_reuses_negative_cache_before_fallback(self, mock_cb):

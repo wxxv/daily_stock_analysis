@@ -7,7 +7,6 @@ Email 发送提醒服务
 """
 import logging
 from typing import Optional, List
-from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
@@ -17,6 +16,7 @@ import smtplib
 
 from data_provider.base import normalize_stock_code
 from src.config import Config
+from src.core.trading_calendar import get_report_now
 from src.formatters import markdown_to_html_document, strip_hidden_markdown_metadata
 
 
@@ -64,6 +64,7 @@ class EmailSender:
             'receivers': config.email_receivers or ([config.email_sender] if config.email_sender else []),
         }
         self._stock_email_groups = getattr(config, 'stock_email_groups', None) or []
+        self._email_stock_codes = list(getattr(config, 'stock_list', None) or [])
         
     def _is_email_configured(self) -> bool:
         """检查邮件配置是否完整（只需邮箱和授权码）"""
@@ -162,7 +163,7 @@ class EmailSender:
         try:
             # 生成主题
             if subject is None:
-                date_str = datetime.now().strftime('%Y-%m-%d')
+                date_str = get_report_now(self._email_stock_codes).strftime('%Y-%m-%d')
                 subject = f"📈 股票智能分析报告 - {date_str}"
 
             sanitized_content = strip_hidden_markdown_metadata(content).strip()
@@ -236,7 +237,7 @@ class EmailSender:
         receivers = receivers or self._email_config['receivers']
         server: Optional[smtplib.SMTP] = None
         try:
-            date_str = datetime.now().strftime('%Y-%m-%d')
+            date_str = get_report_now(self._email_stock_codes).strftime('%Y-%m-%d')
             subject = f"📈 股票智能分析报告 - {date_str}"
             msg = MIMEMultipart('related')
             msg['Subject'] = Header(subject, 'utf-8')

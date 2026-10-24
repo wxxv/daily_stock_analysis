@@ -3978,7 +3978,7 @@ class TestMarketAnalyzerBypassFix:
         result = ma.generate_market_review(overview, [])
 
         assert "Japan Market Recap" in result
-        assert "Today's Japan market showed" in result
+        assert "Reference session 2026-03-05: Japan market showed" in result
         assert "A-share Market Recap" not in result
 
     def test_generate_template_review_keeps_chinese_shell_for_us_when_report_language_is_default(self):
@@ -4007,7 +4007,7 @@ class TestMarketAnalyzerBypassFix:
 
         assert "## 2026-03-05 大盘复盘" in result
         assert "### 一、盘面总览" in result
-        assert "今日美股市场整体呈现**小幅下跌**态势" in result
+        assert "参考交易日 2026-03-05，美股市场整体呈现**小幅下跌**态势" in result
         assert "### 6. Strategy Framework" not in result
         assert "### 六、策略框架" in result
         assert "### 1. Market Summary" not in result
@@ -4016,8 +4016,8 @@ class TestMarketAnalyzerBypassFix:
     @pytest.mark.parametrize(
         ("region", "profile_name", "index_code", "index_name", "english_title", "zh_label"),
         [
-            ("jp", "JP_PROFILE", "N225", "Nikkei 225", "Japan Market Recap", "今日日股市场整体呈现"),
-            ("kr", "KR_PROFILE", "KS11", "KOSPI", "Korea Market Recap", "今日韩股市场整体呈现"),
+            ("jp", "JP_PROFILE", "N225", "Nikkei 225", "Japan Market Recap", "参考交易日 2026-03-05，日股市场整体呈现"),
+            ("kr", "KR_PROFILE", "KS11", "KOSPI", "Korea Market Recap", "参考交易日 2026-03-05，韩股市场整体呈现"),
         ],
     )
     def test_generate_template_review_uses_jp_kr_labels_for_no_llm_fallback(

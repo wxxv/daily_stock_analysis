@@ -336,6 +336,8 @@ class YfinanceFetcher(BaseFetcher):
         return {
             'code': return_code,
             'name': name,
+            'date': (hist.index[-1].date().isoformat()
+                     if isinstance(hist.index, pd.DatetimeIndex) and pd.notna(hist.index[-1]) else None),
             'current': price,
             'change': change,
             'change_pct': change_pct,

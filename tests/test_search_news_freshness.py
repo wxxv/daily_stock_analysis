@@ -125,11 +125,11 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             news_strategy_profile="medium",
             response=_response(
                 [
-                    _result("old", old),
-                    _result("unknown", None),
-                    _result("future_2", future_2),
-                    _result("future_1", future_1),
-                    _result("fresh", fresh),
+                    _result("old", old, snippet="Company update 600519"),
+                    _result("unknown", None, snippet="Company update 600519"),
+                    _result("future_2", future_2, snippet="Company update 600519"),
+                    _result("future_1", future_1, snippet="Company update 600519"),
+                    _result("fresh", fresh, snippet="Company update 600519"),
                 ]
             ),
         )
@@ -169,12 +169,12 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         p1 = SimpleNamespace(
             is_available=True,
             name="P1",
-            search=MagicMock(return_value=_response([_result("too_old", old)])),
+            search=MagicMock(return_value=_response([_result("too_old", old, snippet="Company update 600519")])),
         )
         p2 = SimpleNamespace(
             is_available=True,
             name="P2",
-            search=MagicMock(return_value=_response([_result("fresh", fresh)])),
+            search=MagicMock(return_value=_response([_result("fresh", fresh, snippet="Company update 600519")])),
         )
         service._providers = [p1, p2]
 
@@ -243,8 +243,8 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             search=MagicMock(
                 return_value=_response(
                     [
-                        _result("English headline", fresh),
-                        _result("Another English story", fresh),
+                        _result("English headline", fresh, snippet="Company update 600519"),
+                        _result("Another English story", fresh, snippet="Company update 600519"),
                     ]
                 )
             ),
@@ -252,7 +252,7 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         p2 = SimpleNamespace(
             is_available=True,
             name="P2",
-            search=MagicMock(return_value=_response([_result("中文资讯", fresh)])),
+            search=MagicMock(return_value=_response([_result("中文资讯", fresh, snippet="Company update 600519")])),
         )
         service._providers = [p1, p2]
 
@@ -277,9 +277,9 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             search=MagicMock(
                 return_value=_response(
                     [
-                        _result("English headline", fresh),
-                        _result("中文快讯", fresh),
-                        _result("Second English headline", fresh),
+                        _result("English headline", fresh, snippet="Company earnings update 600519"),
+                        _result("中文快讯", fresh, snippet="Company earnings update 600519"),
+                        _result("Second English headline", fresh, snippet="Company earnings update 600519"),
                     ]
                 )
             ),
@@ -308,8 +308,8 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             search=MagicMock(
                 return_value=_response(
                     [
-                        _result("English headline", fresh),
-                        _result("中文快讯", fresh),
+                        _result("English headline", fresh, snippet="Company update 600519"),
+                        _result("中文快讯", fresh, snippet="Company update 600519"),
                     ]
                 )
             ),
@@ -317,7 +317,7 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         p2 = SimpleNamespace(
             is_available=True,
             name="P2",
-            search=MagicMock(return_value=_response([_result("后续中文资讯", fresh)])),
+            search=MagicMock(return_value=_response([_result("后续中文资讯", fresh, snippet="Company update 600519")])),
         )
         service._providers = [p1, p2]
 
@@ -639,7 +639,7 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
                     _result(
                         "外围市场走弱拖累科技股",
                         fresh,
-                        snippet="外围市场情绪走弱，带动科技股阶段性回撤。",
+                        snippet="外围市场情绪走弱，腾讯控股随科技股阶段性回撤。",
                         source="finance.example.invalid",
                     ),
                 ]
@@ -1864,7 +1864,7 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         fresh_iso = fresh_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         for stock_code, stock_name, expected_lang, expected_country, title, description in (
-            ("600519", "贵州茅台", "zh-hans", "CN", "中文资讯", "中文摘要"),
+            ("600519", "贵州茅台", "zh-hans", "CN", "中文资讯", "600519 中文摘要"),
             ("AAPL", "Apple", "en", "US", "Apple earnings beat", "English summary"),
         ):
             with self.subTest(stock_code=stock_code):
@@ -1911,8 +1911,8 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             news_strategy_profile="medium",  # min(7,3)=3
         )
         mock_search.side_effect = [
-            _response([_result("old", old), _result("fresh", fresh)]),
-            _response([_result("analysis_unknown", None), _result("analysis_dated", analysis_text)]),
+            _response([_result("old", old, snippet="Company update 600519"), _result("fresh", fresh, snippet="Company update 600519")]),
+            _response([_result("analysis_unknown", None, snippet="Company update 600519"), _result("analysis_dated", analysis_text, snippet="Company update 600519")]),
         ]
         with patch("src.search_service.time.sleep"):
             intel = service.search_comprehensive_intel(
@@ -1985,18 +1985,18 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             news_strategy_profile="short",
         )
         mock_search.side_effect = [
-            _response([_result("latest_news", fresh_text)]),
+            _response([_result("latest_news", fresh_text, snippet="Company update 600519")]),
             _response([
-                _result("market_analysis_too_old", very_old),
-                _result("market_analysis_unknown", None),
-                _result("market_analysis_in_window", in_window),
+                _result("market_analysis_too_old", very_old, snippet="Company update 600519"),
+                _result("market_analysis_unknown", None, snippet="Company update 600519"),
+                _result("market_analysis_in_window", in_window, snippet="Company update 600519"),
             ]),
-            _response([_result("risk_check", fresh_text)]),
-            _response([_result("announcement_item", fresh_text)]),
+            _response([_result("risk_check", fresh_text, snippet="Company update 600519")]),
+            _response([_result("announcement_item", fresh_text, snippet="Company update 600519")]),
             _response([
-                _result("earnings_too_old", very_old),
-                _result("earnings_unknown", None),
-                _result("earnings_in_window", in_window),
+                _result("earnings_too_old", very_old, snippet="Company update 600519"),
+                _result("earnings_unknown", None, snippet="Company update 600519"),
+                _result("earnings_in_window", in_window, snippet="Company update 600519"),
             ]),
         ]
 
@@ -2031,9 +2031,9 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             news_strategy_profile="short",
         )
         mock_search.side_effect = [
-            _response([_result("latest_news", fresh_text)]),
-            _response([_result("market_analysis_unknown", None)]),
-            _response([_result("risk_unknown", None)]),
+            _response([_result("latest_news", fresh_text, snippet="Company update 510300")]),
+            _response([_result("market_analysis_unknown", None, snippet="Company update 510300")]),
+            _response([_result("risk_unknown", None, snippet="Company update 510300")]),
         ]
 
         with patch("src.search_service.time.sleep"):
@@ -2060,9 +2060,9 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             news_strategy_profile="short",
         )
         mock_search.side_effect = [
-            _response([_result("latest_news", fresh_text)]),
-            _response([_result("market_analysis_unknown", None)]),
-            _response([_result("risk_unknown", None)]),
+            _response([_result("latest_news", fresh_text, snippet="Company update 600519")]),
+            _response([_result("market_analysis_unknown", None, snippet="Company update 600519")]),
+            _response([_result("risk_unknown", None, snippet="Company update 600519")]),
         ]
 
         with patch("src.search_service.time.sleep"):
@@ -2087,10 +2087,10 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             news_strategy_profile="short",
         )
         mock_search.side_effect = [
-            _response([_result("latest_news", fresh_text)]),
-            _response([_result("market_analysis", None)]),
-            _response([_result("risk_check", fresh_text)]),
-            _response([_result("announcement_item", fresh_text)]),
+            _response([_result("latest_news", fresh_text, snippet="Company update 600519")]),
+            _response([_result("market_analysis", None, snippet="Company update 600519")]),
+            _response([_result("risk_check", fresh_text, snippet="Company update 600519")]),
+            _response([_result("announcement_item", fresh_text, snippet="Company update 600519")]),
         ]
 
         with patch("src.search_service.time.sleep"):
@@ -2117,10 +2117,10 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
             news_strategy_profile="short",
         )
         mock_search.side_effect = [
-            _response([_result("latest_news", fresh_text)]),
-            _response([_result("market_analysis", None)]),
-            _response([_result("risk_check", fresh_text)]),
-            _response([_result("old_announcement", old), _result("fresh_announcement", fresh_text)]),
+            _response([_result("latest_news", fresh_text, snippet="Company update 600519")]),
+            _response([_result("market_analysis", None, snippet="Company update 600519")]),
+            _response([_result("risk_check", fresh_text, snippet="Company update 600519")]),
+            _response([_result("old_announcement", old, snippet="Company update 600519"), _result("fresh_announcement", fresh_text, snippet="Company update 600519")]),
         ]
 
         with patch("src.search_service.time.sleep"):

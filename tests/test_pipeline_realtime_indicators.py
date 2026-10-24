@@ -124,7 +124,7 @@ class TestAugmentHistoricalWithRealtime(unittest.TestCase):
     def test_appends_row_when_last_date_before_today(
         self, _mock_market, _mock_open, mock_now
     ) -> None:
-        today = date.today()
+        today = date(2026, 5, 29)
         # 固定市场时钟为 UTC 当日，使 pipeline 的 market_today 等于 date.today()，
         # 不受 get_market_now 通常使用的市场时区影响（例如 CST=UTC+8）。
         mock_now.return_value = datetime(
@@ -144,7 +144,7 @@ class TestAugmentHistoricalWithRealtime(unittest.TestCase):
     def test_updates_last_row_when_last_date_is_today(
         self, _mock_market, _mock_open, mock_now
     ) -> None:
-        today = date.today()
+        today = date(2026, 5, 29)
         # 固定市场时钟为当日，使 last_date >= market_today，从而更新最后一行而不是追加。
         # 这可以避免 CI 在 CST 收盘后运行时出现日期边界偏移。
         mock_now.return_value = datetime(
@@ -193,7 +193,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_today_overridden_when_realtime_and_trend_exist(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
+        today = date(2026, 5, 29)
         # 固定市场时钟，使 _enhance_context 设置 enhanced['date'] == date.today().isoformat()，
         # 不受 get_market_now 通常使用的市场时区影响（例如 CST=UTC+8）。
         mock_now.return_value = datetime(
@@ -202,7 +202,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         context = {
             "code": "600519",
             "date": (today - timedelta(days=1)).isoformat(),
-            "today": {"close": 15.0, "ma5": 14.8, "ma10": 14.5},
+            "today": {"close": 15.0, "ma5": 14.8, "ma10": 14.5, "volume": 1000000},
             "yesterday": {"close": 14.5, "volume": 1000000},
         }
         quote = _make_realtime_quote(price=15.72, volume=2000000)
@@ -233,7 +233,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_tencent_688691_volume_change_ratio_uses_normalized_share_volume(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
+        today = date(2026, 5, 29)
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
         )
@@ -286,7 +286,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_realtime_metadata_and_partial_estimated_fields_are_propagated(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
+        today = date(2026, 5, 29)
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
         )
@@ -304,8 +304,8 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         quote = _make_realtime_quote(
             price=15.72,
             amount=None,
-            fetched_at="2026-05-31T10:00:05+00:00",
-            provider_timestamp="2026-05-31T10:00:00+00:00",
+            fetched_at="2026-05-29T10:00:05+00:00",
+            provider_timestamp="2026-05-29T10:00:00+00:00",
             is_stale=False,
             stale_seconds=5,
             fallback_from="efinance",
@@ -328,8 +328,8 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
         )
 
         self.assertEqual(enhanced["realtime"]["source"], "tencent")
-        self.assertEqual(enhanced["realtime"]["fetched_at"], "2026-05-31T10:00:05+00:00")
-        self.assertEqual(enhanced["realtime"]["provider_timestamp"], "2026-05-31T10:00:00+00:00")
+        self.assertEqual(enhanced["realtime"]["fetched_at"], "2026-05-29T10:00:05+00:00")
+        self.assertEqual(enhanced["realtime"]["provider_timestamp"], "2026-05-29T10:00:00+00:00")
         self.assertIs(enhanced["realtime"]["is_stale"], False)
         self.assertEqual(enhanced["realtime"]["stale_seconds"], 5)
         self.assertEqual(enhanced["realtime"]["fallback_from"], "efinance")
@@ -339,8 +339,8 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
             enhanced["today"]["estimated_fields"],
             ["close", "open", "high", "low", "ma5", "ma10", "ma20", "volume", "pct_chg"],
         )
-        self.assertEqual(enhanced["today"]["fetched_at"], "2026-05-31T10:00:05+00:00")
-        self.assertEqual(enhanced["today"]["provider_timestamp"], "2026-05-31T10:00:00+00:00")
+        self.assertEqual(enhanced["today"]["fetched_at"], "2026-05-29T10:00:05+00:00")
+        self.assertEqual(enhanced["today"]["provider_timestamp"], "2026-05-29T10:00:00+00:00")
         self.assertEqual(enhanced["today"]["fallback_from"], "efinance")
         self.assertNotIn("amount", enhanced["today"])
         self.assertNotIn("dataSource", enhanced["today"])
@@ -350,7 +350,7 @@ class TestEnhanceContextRealtimeOverride(unittest.TestCase):
     def test_realtime_today_does_not_backfill_historical_amount_or_source(
         self, _mock_market, mock_now
     ) -> None:
-        today = date.today()
+        today = date(2026, 5, 29)
         mock_now.return_value = datetime(
             today.year, today.month, today.day, 10, 0, tzinfo=timezone.utc
         )

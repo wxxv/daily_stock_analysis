@@ -39,6 +39,37 @@ class _DummyBoardFetcher:
 
 
 class TestFundamentalContext(unittest.TestCase):
+    def test_offshore_uses_preloaded_quote_and_leaves_budget_for_statements(self) -> None:
+        from src.config import Config
+        manager = DataFetcherManager(fetchers=[])
+        cfg = Config(fundamental_cache_ttl_seconds=0, fundamental_stage_timeout_seconds=2.,
+                     fundamental_fetch_timeout_seconds=2.)
+        quote = SimpleNamespace(pe_ratio=20., pb_ratio=3., total_mv=None, circ_mv=None)
+        bundle = {"status": "partial", "earnings": {"financial_report": {
+            "report_date": "2026-06-30", "revenue": 100., "currency": "CNY"
+        }}}
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", side_effect=AssertionError("duplicate quote request")) as fetch_quote, \
+                patch.object(manager._yfinance_fundamental_adapter, "get_fundamental_bundle", return_value=bundle) as fetch_bundle:
+            context = manager.get_fundamental_context("hk00700", realtime_quote=quote)
+        fetch_quote.assert_not_called()
+        fetch_bundle.assert_called_once_with("HK00700")
+        self.assertEqual(context["valuation"]["data"]["pe_ratio"], 20.)
+        self.assertEqual(context["earnings"]["data"]["financial_report"]["report_date"], "2026-06-30")
+
+    def test_zero_offshore_budget_keeps_existing_no_fetch_contract(self) -> None:
+        from src.config import Config
+        manager = DataFetcherManager(fetchers=[])
+        cfg = Config(fundamental_cache_ttl_seconds=0, fundamental_stage_timeout_seconds=0.,
+                     fundamental_fetch_timeout_seconds=0.)
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote") as fetch_quote, \
+                patch.object(manager._yfinance_fundamental_adapter, "get_fundamental_bundle") as fetch_bundle:
+            context = manager.get_fundamental_context("hk00700", realtime_quote=SimpleNamespace(pe_ratio=20.))
+        fetch_quote.assert_not_called()
+        fetch_bundle.assert_not_called()
+        self.assertIsNone(context["valuation"]["data"]["pe_ratio"])
+
     def test_not_supported_builder_uses_existing_fundamental_schema(self) -> None:
         manager = DataFetcherManager(fetchers=[])
 

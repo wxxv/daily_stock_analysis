@@ -1669,6 +1669,10 @@ class AkshareFetcher(BaseFetcher):
                 turnover_rate=safe_float(row.get('换手率')),
                 amplitude=safe_float(row.get('振幅')),
                 pe_ratio=safe_float(row.get('市盈率')),
+                open_price=safe_float(row.get('今开')),
+                high=safe_float(row.get('最高')),
+                low=safe_float(row.get('最低')),
+                pre_close=safe_float(row.get('昨收')),
                 pb_ratio=safe_float(row.get('市净率')),
                 total_mv=safe_float(row.get('总市值')),
                 circ_mv=safe_float(row.get('流通市值')),
@@ -1799,13 +1803,28 @@ class AkshareFetcher(BaseFetcher):
                 return None
 
             row = row.iloc[0]
+            provider_timestamp = None
+            raw_timestamp = row.get('日期时间')
+            if isinstance(raw_timestamp, str) and raw_timestamp.strip():
+                try:
+                    from src.core.trading_calendar import get_market_now
+
+                    provider_time = datetime.fromisoformat(raw_timestamp.strip())
+                    provider_timestamp = get_market_now('hk', current_time=provider_time).isoformat()
+                except ValueError:
+                    logger.debug("港股新浪行情时间无法解析: %r", raw_timestamp)
             quote = UnifiedRealtimeQuote(
                 code=stock_code,
-                name=str(row.get('名称', '')),
-                source=RealtimeSource.AKSHARE_EM,
+                name=str(row.get('中文名称') or row.get('名称') or ''),
+                source=RealtimeSource.AKSHARE_SINA,
                 price=safe_float(row.get('最新价')),
                 change_pct=safe_float(row.get('涨跌幅')),
                 change_amount=safe_float(row.get('涨跌额')),
+                open_price=safe_float(row.get('今开')),
+                high=safe_float(row.get('最高')),
+                low=safe_float(row.get('最低')),
+                pre_close=safe_float(row.get('昨收')),
+                provider_timestamp=provider_timestamp,
                 volume=safe_int(row.get('成交量')),
                 amount=safe_float(row.get('成交额')),
             )

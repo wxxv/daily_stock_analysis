@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
+from src.reports.report_time import daily_bar_is_stale
 
 from src.schemas.analysis_context_pack import (
     AnalysisContextBlock,
@@ -232,11 +233,18 @@ def _build_daily_bars_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisCon
         block_status = ContextFieldStatus.PARTIAL
     else:
         block_status = ContextFieldStatus.MISSING
+    timing = (artifacts.enhanced_context or {}).get("report_time") or {}
+    expected_date = timing.get("expected_daily_bar_date") if isinstance(timing, dict) else None
+    stale = daily_bar_is_stale(date_value, expected_date)
+    if stale is True and block_status != ContextFieldStatus.MISSING:
+        block_status = ContextFieldStatus.STALE
+        metadata["expected_daily_bar_date"] = expected_date
     return AnalysisContextBlock(
         status=block_status,
         items=items,
         source="storage.get_analysis_context",
         metadata=metadata,
+        warnings=["daily_bars_behind_expected_session"] if stale is True else [],
     )
 
 

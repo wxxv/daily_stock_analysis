@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 import uuid
 
 from src.config import get_config
+from src.core.trading_calendar import get_report_now
 from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
 from src.report_language import normalize_report_language
@@ -316,7 +317,7 @@ def run_market_review(
             )
             if save_report_file:
                 # 保存报告到文件
-                date_str = datetime.now().strftime('%Y%m%d')
+                date_str = get_report_now(getattr(runtime_config, 'stock_list', [])).strftime('%Y%m%d')
                 report_filename = f"market_review_{date_str}.md"
                 filepath = notifier.save_report_to_file(
                     markdown_report,

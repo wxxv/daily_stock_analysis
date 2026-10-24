@@ -147,6 +147,17 @@ def test_quote_block_maps_available_missing_fallback_and_explicit_stale() -> Non
     assert "quote_stale" in stale.warnings
 
 
+def test_old_history_stays_stale_even_when_current_quote_is_overlaid() -> None:
+    pack = AnalysisContextBuilder.build(_artifacts(enhanced_context={
+        "today": {"date": "2026-05-29", "close": 1880., "is_estimated": True},
+        "report_time": {"expected_daily_bar_date": "2026-05-28"},
+    }))
+    block = pack.blocks["daily_bars"]
+    assert block.status == ContextFieldStatus.STALE
+    assert block.metadata["date"] == "2026-05-24"
+    assert block.metadata["expected_daily_bar_date"] == "2026-05-28"
+
+
 def test_quote_block_maps_realtime_metadata_and_status_priority() -> None:
     fallback = AnalysisContextBuilder.build(
         _artifacts(

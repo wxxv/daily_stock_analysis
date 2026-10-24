@@ -3462,11 +3462,8 @@ class SearchService:
             if item.relevance_category == cls._DIRECT_NEWS_CATEGORY
             or (item.relevance_score or 0) > 0
         ]
-        if meaningful_candidates:
-            dropped_zero_relevance = len(candidates) - len(meaningful_candidates)
-            filtered_results = meaningful_candidates
-        else:
-            filtered_results = candidates
+        dropped_zero_relevance = len(candidates) - len(meaningful_candidates)
+        filtered_results = meaningful_candidates
 
         if dropped_low_quality or dropped_adult_spam or dropped_zero_relevance:
             logger.info(
@@ -4633,6 +4630,16 @@ class SearchService:
             # 短暂延迟避免请求过快
             time.sleep(0.5)
         
+        # Count and present each source once across search dimensions.
+        seen_sources = set()
+        for response in results.values():
+            unique = []
+            for item in response.results:
+                key = item.url or (item.title, item.published_date)
+                if key not in seen_sources:
+                    seen_sources.add(key)
+                    unique.append(item)
+            response.results = unique
         return results
     
     def format_intel_report(self, intel_results: Dict[str, SearchResponse], stock_name: str) -> str:
@@ -4675,6 +4682,8 @@ class SearchService:
                 for i, r in enumerate(resp.results[:4], 1):
                     date_str = f" [{r.published_date}]" if r.published_date else ""
                     lines.append(f"  {i}. {r.title}{date_str}")
+                    if r.url:
+                        lines.append(f"     原文链接: {r.url}")
                     # 如果摘要太短，可能信息量不足
                     snippet = r.snippet[:150] if len(r.snippet) > 20 else r.snippet
                     lines.append(f"     {snippet}...")

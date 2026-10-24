@@ -19,12 +19,14 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 from enum import Enum
 
 from src.config import Config, get_config
 from src.enums import ReportType
+from src.core.trading_calendar import get_report_now
+from src.reports.news_sources import format_news_sources
+from src.reports.report_time import format_report_time
 from src.market_phase_summary import format_public_market_status_line, format_public_phase_pack_excerpt
 from src.notification_routing import (
     get_notification_route_config,
@@ -421,20 +423,24 @@ class NotificationService(
 
         return empty_news_disclosure(result, language)
 
+    def _report_now(self):
+        return get_report_now(getattr(self, "_email_stock_codes", []))
+
     @staticmethod
     def _append_data_sources_line(
         lines: List[str],
         result: AnalysisResult,
         labels: Dict[str, str],
     ) -> bool:
+        start = len(lines)
         data_sources = getattr(result, "data_sources", None)
-        if not isinstance(data_sources, str):
-            return False
-        data_sources = data_sources.strip()
-        if not data_sources:
-            return False
-        lines.append(f"*📋 {labels['data_sources_label']}：{data_sources}*")
-        return True
+        if isinstance(data_sources, str) and data_sources.strip():
+            lines.append(f"*📋 {labels['data_sources_label']}：{data_sources.strip()}*")
+        dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
+        sources = format_news_sources(dashboard.get("news_sources"), result.report_language)
+        if sources:
+            lines.extend(["", sources])
+        return len(lines) > start
 
     def generate_aggregate_report(
         self,
@@ -482,6 +488,7 @@ class NotificationService(
         results: List[AnalysisResult],
         report_language: str,
     ) -> None:
+        lines.extend([f"> {get_report_labels(report_language)['position_scope_note']}", ""])
         status_line = self._public_market_status_line(results, report_language)
         if status_line:
             lines.extend([status_line, ""])
@@ -915,7 +922,7 @@ class NotificationService(
             Markdown 格式的日报内容
         """
         if report_date is None:
-            report_date = datetime.now().strftime('%Y-%m-%d')
+            report_date = self._report_now().strftime('%Y-%m-%d')
         report_language = self._get_report_language(results)
         labels = get_report_labels(report_language)
 
@@ -924,7 +931,7 @@ class NotificationService(
             f"# 📅 {report_date} {labels['report_title']}",
             "",
             f"> {labels['analyzed_prefix']} **{len(results)}** {labels['stock_unit']} | "
-            f"{labels['generated_at_label']}：{datetime.now().strftime('%H:%M:%S')}",
+            f"{labels['generated_at_label']}：{self._report_now().strftime('%H:%M:%S')}",
         ]
         self._append_market_status_line(report_lines, results, report_language)
         report_lines.extend(["---", ""])
@@ -1104,7 +1111,7 @@ class NotificationService(
         # 底部信息（去除免责声明）
         report_lines.extend([
             "",
-            f"*{labels['generated_at_label']}：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+            f"*{labels['generated_at_label']}：{self._report_now().strftime('%Y-%m-%d %H:%M:%S')}*",
         ])
 
         return "\n".join(report_lines)
@@ -1302,7 +1309,7 @@ class NotificationService(
                 return out
 
         if report_date is None:
-            report_date = datetime.now().strftime('%Y-%m-%d')
+            report_date = self._report_now().strftime('%Y-%m-%d')
 
         # 按评分排序（高分在前）
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
@@ -1356,6 +1363,9 @@ class NotificationService(
                     f"## {signal_emoji} {stock_name} ({result.code})",
                     "",
                 ])
+                timing = format_report_time(dashboard.get("report_time"), report_language)
+                if timing:
+                    report_lines.extend([f"> {timing}", ""])
                 # ========== 舆情与基本面概览（放在最前面）==========
                 intel = dashboard.get('intelligence', {}) if dashboard else {}
                 if intel:
@@ -1460,11 +1470,12 @@ class NotificationService(
                     # 量能分析
                     if vol_data:
                         report_lines.extend([
-                            f"**{labels['volume_label']}**: {labels['volume_ratio_label']} {vol_data.get('volume_ratio', 'N/A')} ({vol_data.get('volume_status', '')}) | "
-                            f"{labels['turnover_rate_label']} {vol_data.get('turnover_rate', 'N/A')}%",
-                            f"💡 *{vol_data.get('volume_meaning', '')}*",
+                            f"**{labels['volume_label']}**: {labels['volume_ratio_label']} {self._format_text(vol_data.get('volume_ratio'))} ({vol_data.get('volume_status') or 'N/A'}) | "
+                            f"{labels['turnover_rate_label']} {self._format_percent(vol_data.get('turnover_rate'))}",
                             "",
                         ])
+                        if vol_data.get('volume_meaning'):
+                            report_lines.extend([f"💡 *{vol_data['volume_meaning']}*", ""])
                     # 筹码结构
                     if chip_data:
                         if is_chip_structure_unavailable(chip_data):
@@ -1613,7 +1624,7 @@ class NotificationService(
         # 底部（去除免责声明）
         report_lines.extend([
             "",
-            f"*{labels['generated_at_label']}：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+            f"*{labels['generated_at_label']}：{self._report_now().strftime('%Y-%m-%d %H:%M:%S')}*",
         ])
         models = self._collect_models_used(results)
         if models:
@@ -1641,14 +1652,14 @@ class NotificationService(
             out = render(
                 platform='wechat',
                 results=results,
-                report_date=datetime.now().strftime('%Y-%m-%d'),
+                report_date=self._report_now().strftime('%Y-%m-%d'),
                 summary_only=self._report_summary_only,
                 extra_context={"report_language": report_language},
             )
             if out:
                 return out
 
-        report_date = datetime.now().strftime('%Y-%m-%d')
+        report_date = self._report_now().strftime('%Y-%m-%d')
 
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
@@ -1807,7 +1818,7 @@ class NotificationService(
                 lines.append("")
 
         # 底部
-        lines.append(f"*{labels['report_time_label']}: {datetime.now().strftime('%H:%M')}*")
+        lines.append(f"*{labels['report_time_label']}: {self._report_now().strftime('%H:%M')}*")
         models = self._collect_models_used(results)
         if models:
             lines.append(f"*{labels['analysis_model_label']}: {', '.join(models)}*")
@@ -1826,7 +1837,7 @@ class NotificationService(
         Returns:
             精简版 Markdown 内容
         """
-        report_date = datetime.now().strftime('%Y-%m-%d')
+        report_date = self._report_now().strftime('%Y-%m-%d')
         report_language = self._get_report_language(results)
         labels = get_report_labels(report_language)
 
@@ -1907,7 +1918,7 @@ class NotificationService(
             Brief markdown content.
         """
         if report_date is None:
-            report_date = datetime.now().strftime('%Y-%m-%d')
+            report_date = self._report_now().strftime('%Y-%m-%d')
         report_language = self._get_report_language(results)
         labels = get_report_labels(report_language)
         config = get_config()
@@ -1950,7 +1961,7 @@ class NotificationService(
             if self._append_data_sources_line(lines, r, labels):
                 lines.append("")
         lines.append("")
-        lines.append(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+        lines.append(f"*{self._report_now().strftime('%Y-%m-%d %H:%M:%S')}*")
         models = self._collect_models_used(results)
         if models:
             lines.append(f"*{labels['analysis_model_label']}: {', '.join(models)}*")
@@ -1968,7 +1979,7 @@ class NotificationService(
         Returns:
             Markdown 格式的单股报告
         """
-        report_date = datetime.now().strftime('%Y-%m-%d %H:%M')
+        report_date = self._report_now().strftime('%Y-%m-%d %H:%M')
         report_language = self._get_report_language(result)
         labels = get_report_labels(report_language)
         signal_text, signal_emoji, _ = self._get_signal_level(result)
@@ -1988,6 +1999,7 @@ class NotificationService(
         ]
 
         excerpt = self._public_phase_pack_excerpt(result, report_language)
+        lines.extend([f"> {labels['position_scope_note']}", ""])
         if excerpt:
             lines.extend([excerpt, ""])
 
@@ -2109,6 +2121,11 @@ class NotificationService(
         # 财务摘要 / 股东回报 / 关联板块（数据缺失时自动隐藏对应小节）
         self._append_fundamental_blocks(lines, result)
 
+        timing = format_report_time(dashboard.get("report_time"), report_language)
+        if timing:
+            lines.extend([f"> {timing}", ""])
+        self._append_data_sources_line(lines, result, labels)
+
         lines.append("---")
         if self._should_show_llm_model():
             model_used = normalize_model_used(getattr(result, "model_used", None))
@@ -2148,7 +2165,7 @@ class NotificationService(
         labels = get_report_labels(report_language)
 
         lines.extend([
-            f"### 📈 {labels['market_snapshot_heading']}",
+            f"### 📈 {labels['market_snapshot_heading']} ({snapshot.get('date') or 'N/A'})",
             "",
             f"| {labels['close_label']} | {labels['prev_close_label']} | {labels['open_label']} | {labels['high_label']} | {labels['low_label']} | {labels['change_pct_label']} | {labels['change_amount_label']} | {labels['amplitude_label']} | {labels['volume_label']} | {labels['amount_label']} |",
             "|------|------|------|------|------|-------|-------|------|--------|--------|",
@@ -2593,7 +2610,7 @@ class NotificationService(
             return self.send_to_wechat(content)
         if channel == NotificationChannel.FEISHU:
             if getattr(self, "_feishu_send_as_file", False) and route_type == "report":
-                date_str = datetime.now().strftime('%Y%m%d')
+                date_str = self._report_now().strftime('%Y%m%d')
                 filepath = self.save_report_to_file(
                     sanitized_content, filename=f"report_{date_str}.md"
                 )
@@ -2907,7 +2924,7 @@ class NotificationService(
         from pathlib import Path
 
         if filename is None:
-            date_str = datetime.now().strftime('%Y%m%d')
+            date_str = self._report_now().strftime('%Y%m%d')
             filename = f"report_{date_str}.md"
 
         # 确保 reports 目录存在（使用项目根目录下的 reports）

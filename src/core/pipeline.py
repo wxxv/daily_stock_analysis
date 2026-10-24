@@ -13,6 +13,7 @@ A股自选股智能分析系统 - 核心分析流水线
 
 import logging
 import inspect
+import math
 import threading
 import time
 from pathlib import Path
@@ -98,12 +99,14 @@ from src.services.decision_signal_extractor import (
 from src.services.stock_list_parser import AnalysisTarget, ParseStatus
 from src.services.decision_signal_summary import summarize_decision_signal
 from src.enums import ReportType
+from src.reports.report_time import build_report_time, normalize_next_session_dates
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from src.core.trading_calendar import (
     build_market_phase_context,
     get_effective_trading_date,
     get_market_for_stock,
     get_market_now,
+    get_report_now,
     is_market_open,
 )
 from data_provider.us_index_mapping import is_us_stock_code
@@ -599,6 +602,7 @@ class StockAnalysisPipeline:
                             'fundamental_stage_timeout_seconds',
                             FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT,
                         ),
+                        **({"realtime_quote": realtime_quote} if realtime_quote is not None else {}),
                     )
                 except Exception as e:
                     logger.warning(f"{stock_name}({code}) 基本面聚合失败: {e}")
@@ -686,6 +690,7 @@ class StockAnalysisPipeline:
                 market=market or "cn",
             )
             news_result_count: Optional[int] = None
+            news_sources = []
             self._emit_progress(46, f"{stock_name}：正在检索新闻与舆情")
             if self.search_service is not None and self.search_service.is_available:
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
@@ -711,6 +716,12 @@ class StockAnalysisPipeline:
                         len(r.results) for r in intel_results.values() if r.success
                     )
                     news_result_count = total_results
+                    news_sources = [
+                        {"title": item.title, "url": item.url, "published_date": item.published_date,
+                         "source": item.source, "category": item.relevance_category}
+                        for response in intel_results.values() if response.success
+                        for item in response.results
+                    ]
                     logger.info(f"{stock_name}({code}) 情报搜索完成: 共 {total_results} 条结果")
                     logger.debug(f"{stock_name}({code}) 情报搜索结果:\n{news_context}")
 
@@ -891,6 +902,9 @@ class StockAnalysisPipeline:
             if result:
                 self._emit_progress(94, f"{stock_name}：正在校验并整理分析结果")
                 result.query_id = query_id
+                if not isinstance(result.dashboard, dict):
+                    result.dashboard = {}
+                result.dashboard["news_sources"] = news_sources
                 realtime_data = enhanced_context.get('realtime', {})
                 result.current_price = realtime_data.get('price')
                 result.change_pct = realtime_data.get('change_pct')
@@ -931,6 +945,9 @@ class StockAnalysisPipeline:
                     result.market_structure_context = market_structure_context
                 result.market_phase_summary = market_phase_summary
                 result.analysis_context_pack_overview = analysis_context_pack_overview
+                report_time = enhanced_context.get("report_time")
+                if isinstance(report_time, dict):
+                    normalize_next_session_dates(result, report_time)
                 self._refresh_decision_action_for_final_result(
                     result,
                     report_type=report_type.value,
@@ -1098,7 +1115,10 @@ class StockAnalysisPipeline:
 
         # Issue #234：盘中分析使用实时 OHLC 与趋势 MA 覆盖 today。
         # 防护条件：trend_result.ma5 > 0 表示 MA 计算已成功且数据量充足。
-        if realtime_quote and trend_result and trend_result.ma5 > 0:
+        valid_daily_quote = self._can_overlay_realtime_bar(
+            realtime_quote, enhanced.get('code', ''), market_phase_context=market_phase_context
+        )
+        if valid_daily_quote and trend_result and trend_result.ma5 > 0:
             price = getattr(realtime_quote, 'price', None)
             if price is not None and price > 0:
                 yesterday_close = None
@@ -1108,14 +1128,23 @@ class StockAnalysisPipeline:
                 market_today = get_market_now(
                     get_market_for_stock(normalize_stock_code(enhanced.get('code', '')))
                 ).date().isoformat()
+                original_date = orig_today.get('date') or enhanced.get('date')
+                if original_date and str(original_date)[:10] < market_today and orig_today.get('close') is not None:
+                    # Advancing a bar also advances its previous-close reference.
+                    enhanced['yesterday'] = dict(orig_today)
+                    yesterday_close = orig_today['close']
+                quote_pre_close = getattr(realtime_quote, 'pre_close', None)
+                if (isinstance(quote_pre_close, (int, float)) and math.isfinite(quote_pre_close)
+                        and quote_pre_close > 0):
+                    enhanced['yesterday'] = dict(enhanced.get('yesterday') or {})
+                    enhanced['yesterday']['close'] = quote_pre_close
+                    yesterday_close = quote_pre_close
                 source = getattr(realtime_quote, 'source', None)
                 source_name = getattr(source, 'value', source)
                 source_name = str(source_name) if source_name is not None else 'unknown'
-                open_p = getattr(realtime_quote, 'open_price', None) or getattr(
-                    realtime_quote, 'pre_close', None
-                ) or yesterday_close or orig_today.get('open') or price
-                high_p = getattr(realtime_quote, 'high', None) or price
-                low_p = getattr(realtime_quote, 'low', None) or price
+                open_p = realtime_quote.open_price
+                high_p = realtime_quote.high
+                low_p = realtime_quote.low
                 vol = getattr(realtime_quote, 'volume', None)
                 amt = getattr(realtime_quote, 'amount', None)
                 pct = getattr(realtime_quote, 'change_pct', None)
@@ -1212,6 +1241,9 @@ class StockAnalysisPipeline:
             )
         )
 
+        enhanced["report_time"] = build_report_time(
+            context.get('code', ''), (enhanced.get('today') or {}).get('date') or enhanced.get('date')
+        )
         return enhanced
 
     def _attach_belong_boards_to_fundamental_context(
@@ -2730,6 +2762,47 @@ class StockAnalysisPipeline:
         else:
             return "震荡整理 ↔️"
 
+    def _can_overlay_realtime_bar(
+        self,
+        quote: Any,
+        code: str,
+        *,
+        market: Optional[str] = None,
+        market_phase_context: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Only replace daily bars with a complete, consistent same-session quote.
+
+        A last price or previous close cannot stand in for missing session OHLC.
+        The independent realtime block remains available when an overlay is rejected.
+        """
+        if quote is None or not getattr(self.config, 'enable_realtime_technical_indicators', True):
+            return False
+        if getattr(quote, 'is_stale', False):
+            return False
+        market = market or get_market_for_stock(normalize_stock_code(code))
+        market_now = get_market_now(market)
+        if not market or not is_market_open(market, market_now.date()):
+            return False
+        phase = (market_phase_context or {}).get('phase')
+        if not phase:
+            phase = build_market_phase_context(market=market, current_time=market_now).phase.value
+        if phase in {'premarket', 'non_trading', 'unknown'}:
+            return False
+        timestamp = getattr(quote, 'provider_timestamp', None)
+        if timestamp:
+            try:
+                quote_time = pd.Timestamp(timestamp).to_pydatetime()
+                if get_market_now(market, current_time=quote_time).date() != market_now.date():
+                    return False
+            except (TypeError, ValueError, OverflowError):
+                return False
+        values = [getattr(quote, field, None) for field in ('open_price', 'high', 'low', 'price')]
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) or value <= 0 for value in values):
+            return False
+        open_price, high, low, close = values
+        return low <= min(open_price, close) <= max(open_price, close) <= high
+
     def _augment_historical_with_realtime(
         self,
         df: pd.DataFrame,
@@ -2758,7 +2831,7 @@ class StockAnalysisPipeline:
         if market is None:
             market = get_market_for_stock(code)
         market_today = get_market_now(market).date()
-        if market and not is_market_open(market, market_today):
+        if not self._can_overlay_realtime_bar(realtime_quote, code, market=market):
             return df
 
         last_val = df['date'].max()
@@ -2766,12 +2839,9 @@ class StockAnalysisPipeline:
             last_val.date() if hasattr(last_val, 'date') else
             (last_val if isinstance(last_val, date) else pd.Timestamp(last_val).date())
         )
-        yesterday_close = float(df.iloc[-1]['close']) if len(df) > 0 else price
-        open_p = getattr(realtime_quote, 'open_price', None) or getattr(
-            realtime_quote, 'pre_close', None
-        ) or yesterday_close
-        high_p = getattr(realtime_quote, 'high', None) or price
-        low_p = getattr(realtime_quote, 'low', None) or price
+        open_p = realtime_quote.open_price
+        high_p = realtime_quote.high
+        low_p = realtime_quote.low
         vol = getattr(realtime_quote, 'volume', None) or 0
         amt = getattr(realtime_quote, 'amount', None)
         pct = getattr(realtime_quote, 'change_pct', None)
@@ -3655,7 +3725,7 @@ class StockAnalysisPipeline:
                 save_report = getattr(self.notifier, "save_report_to_file", None)
                 if callable(save_report):
                     try:
-                        date_str = datetime.now().strftime('%Y%m%d')
+                        date_str = get_report_now([stock_code]).strftime('%Y%m%d')
                         filename = f"report_{date_str}_{stock_code}.md"
                         filepath = save_report(report_content, filename=filename)
                         logger.info(f"[{stock_code}] 单股报告已保存到本地: {filepath}")
@@ -3775,7 +3845,7 @@ class StockAnalysisPipeline:
     @staticmethod
     def _default_report_filename() -> str:
         """Build default local report filename (aligned with notifier defaults)."""
-        date_str = datetime.now().strftime('%Y%m%d')
+        date_str = get_report_now(getattr(get_config(), 'stock_list', [])).strftime('%Y%m%d')
         return f"report_{date_str}.md"
 
     @staticmethod
@@ -4036,7 +4106,7 @@ class StockAnalysisPipeline:
                     if channel == NotificationChannel.FEISHU:
                         def _send_feishu_report() -> bool:
                             if getattr(self.notifier, "_feishu_send_as_file", False):
-                                date_str = datetime.now().strftime('%Y%m%d')
+                                date_str = get_report_now(getattr(self.config, 'stock_list', [])).strftime('%Y%m%d')
                                 filepath = self.notifier.save_report_to_file(
                                     strip_hidden_markdown_metadata(report).strip(),
                                     filename=f"dashboard_{date_str}.md",
