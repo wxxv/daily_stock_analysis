@@ -11,6 +11,14 @@ from src.config import Config, setup_env
 
 
 class ConfigEnvCompatibilityTestCase(unittest.TestCase):
+    @patch("src.config.setup_env")
+    def test_analysis_output_budget_loads_without_changing_other_budgets(self, _mock_setup_env):
+        for raw, expected in (("", 8192), ("32768", 32768), ("invalid", 8192), ("0", 1)):
+            with self.subTest(raw=raw), patch.dict(os.environ, {"ANALYSIS_MAX_OUTPUT_TOKENS": raw}, clear=True):
+                config = Config._load_from_env()
+            self.assertEqual(config.analysis_max_output_tokens, expected)
+            self.assertEqual(config.anthropic_max_tokens, 8192)
+
     def tearDown(self):
         Config.reset_instance()
 

@@ -246,6 +246,7 @@ The workflow is scheduled daily at **00:00 (Beijing Time)** and sends notificati
 | `LLM_HERMES_BASE_URL` | Hermes local loopback `/v1` endpoint; defaults to `http://127.0.0.1:8642/v1`; remote endpoints are not supported | `http://127.0.0.1:8642/v1` | No |
 | `LLM_HERMES_MODELS` | Raw Hermes model list; Phase 3 defaults to `hermes-agent`, maps to runtime route `openai/hermes-agent`, and does not support Vision, stream, tools, or Agent tools | `hermes-agent` | No |
 | `LITELLM_CONFIG` | Advanced model routing YAML path (expert use) | - | No |
+| `ANALYSIS_MAX_OUTPUT_TOKENS` | Positive output-token budget for LiteLLM per-stock structured analysis. Reasoning and answer tokens may share this quota; increase within the model's limit (for example `32768`) for truncated JSON, with possible cost and latency increases. Does not set market-review, screening, chat, or local CLI limits. Actions accepts the matching Repository Variable. | `8192` | No |
 | `LLM_USAGE_HMAC_SECRET` | Secret for LLM usage telemetry message HMACs; leave empty to use a generated local data-dir secret file | - | No |
 | `LLM_USAGE_HMAC_KEY_VERSION` | Version label for the LLM usage HMAC key; update it when rotating the secret | `local-v1` | No |
 | `ANSPIRE_API_KEYS` | [Anspire](https://open.anspire.cn/dsa?share_code=QFBC0FYC) API key, one key for the LLM gateway and search | - | Optional |

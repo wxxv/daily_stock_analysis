@@ -1020,6 +1020,8 @@ class Config:
 
     # Unified temperature for all LLM calls (LLM_TEMPERATURE); legacy per-provider temps are fallback only
     llm_temperature: float = 0.7
+    # Per-stock structured analysis budget; reasoning may share this output quota.
+    analysis_max_output_tokens: int = 8192
 
     # Provider prompt-cache controls. These do not control provider implicit cache.
     llm_prompt_cache_telemetry_enabled: bool = True
@@ -1943,6 +1945,10 @@ class Config:
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
             llm_temperature=resolve_unified_llm_temperature(litellm_model),
+            analysis_max_output_tokens=parse_env_int(
+                os.getenv('ANALYSIS_MAX_OUTPUT_TOKENS'), 8192,
+                field_name='ANALYSIS_MAX_OUTPUT_TOKENS', minimum=1,
+            ),
             litellm_config_path=litellm_config_path,
             llm_models_source=llm_models_source,
             llm_channels=llm_channels,

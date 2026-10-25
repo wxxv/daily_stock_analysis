@@ -167,6 +167,13 @@ const settingsHelpZhCN: SettingsHelpMap = {
     impact: ['影响模型选择、路由、fallback 和可用模型声明。'],
     notes: ['如果 YAML 配置失效，系统会回退到渠道或 legacy 配置路径。'],
   },
+  'settings.ai_model.ANALYSIS_MAX_OUTPUT_TOKENS': {
+    title: '个股分析输出额度',
+    summary: '控制默认模型生成个股结构化报告时的最大输出 token 数。',
+    usage: '默认 8192。若报告 JSON 被截断，可在模型允许范围内提高，例如 32768。',
+    valueNotes: ['部分推理模型的思考与正文共用额度。'],
+    notes: ['提高额度可能增加费用和耗时。大盘复盘、选股、问股及本地 CLI 的输出限制单独控制。'],
+  },
   'settings.ai_model.LLM_TEMPERATURE': {
     title: 'Temperature',
     summary: '控制模型输出随机性。',
@@ -367,9 +374,21 @@ const settingsHelpZhCN: SettingsHelpMap = {
     impact: ['影响现价、技术指标、盘中分析和部分报告字段。'],
     notes: ['单一数据源失败应降级到后续数据源，不应拖垮主流程。'],
   },
+  'settings.data_source.FUTU_OAUTH_CLIENT_ID': {
+    title: '富途云端客户端 ID',
+    summary: '配合只读 refresh token 使用富途港股行情快照，无需常驻 OpenD。',
+    usage: '通过富途官方 OAuth 流程授权 quote:read，与 FUTU_OAUTH_REFRESH_TOKEN 成对配置。',
+    notes: ['云端接入提供快照和股票名称；日线、财报继续使用其他已有来源。'],
+  },
+  'settings.data_source.FUTU_OAUTH_REFRESH_TOKEN': {
+    title: '富途行情刷新凭据',
+    summary: '保存仅授权行情读取的凭据，用于自动刷新行情访问授权。',
+    usage: '与客户端 ID 一起配置。GitHub Actions 中保存为同名 Repository Secret。',
+    notes: ['不要填写密码或授予交易权限。授权撤销后需重新授权并替换凭据；失败时回退备用行情源。'],
+  },
   'settings.data_source.FUTU_OPEND_HOST': {
     title: 'Futu OpenD 地址',
-    summary: '配置 Futu OpenD 服务地址。留空时不启用 Futu 数据源。',
+    summary: '配置 Futu OpenD 服务地址。留空时不启用 OpenD，云端 OAuth 行情可独立配置。',
     usage: '填写 IPv4 地址或可解析到 IPv4 的主机名。',
     valueNotes: ['OpenD 必须允许 DSA 容器访问。'],
     impact: ['影响港股 Futu 实时行情、历史行情和基本面数据访问。'],
@@ -389,7 +408,7 @@ const settingsHelpZhCN: SettingsHelpMap = {
     usage: '使用英文逗号分隔，可选 futu、longbridge、akshare、yfinance。',
     valueNotes: ['前面的数据源优先尝试；失败后自动回退。'],
     impact: ['只影响港股实时行情，不改变 A 股实时数据源优先级。'],
-    notes: ['未配置 Futu OpenD 时会自动跳过 futu。'],
+    notes: ['未配置完整富途 OAuth 凭据或 OpenD 时会自动跳过 futu。'],
   },
   'settings.data_source.search_api_keys': {
     title: '搜索服务 API Key',
@@ -1423,6 +1442,13 @@ const settingsHelpEnUS: SettingsHelpMap = {
     impact: ['Affects model routing, fallbacks, and available model declarations.'],
     notes: ['If the YAML cannot be parsed, the system falls back to channels or legacy configuration.'],
   },
+  'settings.ai_model.ANALYSIS_MAX_OUTPUT_TOKENS': {
+    title: 'Stock Analysis Output Budget',
+    summary: 'Sets the maximum output tokens for per-stock structured reports using the default model backend.',
+    usage: 'Defaults to 8192. Increase within the model limit, for example to 32768, if report JSON is truncated.',
+    valueNotes: ['Reasoning and answer tokens may share the quota.'],
+    notes: ['Higher limits may increase cost and latency. Market review, screening, chat, and local CLI limits are separate.'],
+  },
   'settings.ai_model.LLM_TEMPERATURE': {
     title: 'Temperature',
     summary: 'Controls output randomness.',
@@ -1579,9 +1605,21 @@ const settingsHelpEnUS: SettingsHelpMap = {
     impact: ['Affects request count and per-request pressure for TickFlow batch prefetch.'],
     notes: ['This setting only affects TickFlow batch paths.'],
   },
+  'settings.data_source.FUTU_OAUTH_CLIENT_ID': {
+    title: 'Futu Cloud Client ID',
+    summary: 'Enables HK quote snapshots with a read-only refresh token, without a persistent OpenD service.',
+    usage: 'Authorize quote:read through Futu OAuth and configure together with FUTU_OAUTH_REFRESH_TOKEN.',
+    notes: ['The cloud adapter supplies snapshots and names; daily bars and financials use existing sources.'],
+  },
+  'settings.data_source.FUTU_OAUTH_REFRESH_TOKEN': {
+    title: 'Futu Quote Refresh Token',
+    summary: 'Stores a quote-read-only grant for automatic quote authorization refresh.',
+    usage: 'Configure with the client ID. In GitHub Actions, use the matching Repository Secret.',
+    notes: ['Do not enter a password or grant trading access. Replace the token after reauthorization if revoked; failures fall back to other quote sources.'],
+  },
   'settings.data_source.FUTU_OPEND_HOST': {
     title: 'Futu OpenD Host',
-    summary: 'Configures the Futu OpenD service address. Leave empty to disable Futu.',
+    summary: 'Configures the Futu OpenD service address. Leave empty to disable OpenD; cloud OAuth quotes are configured independently.',
     usage: 'Use an IPv4 address or a hostname resolving to IPv4.',
     valueNotes: ['The OpenD service must be reachable from the DSA container.'],
     impact: ['Affects Futu HK realtime, historical, and fundamental data access.'],
@@ -1601,7 +1639,7 @@ const settingsHelpEnUS: SettingsHelpMap = {
     usage: 'Use comma-separated futu, longbridge, akshare, or yfinance values.',
     valueNotes: ['Earlier providers are tried first; failures fall back automatically.'],
     impact: ['Affects HK realtime quotes only, not A-share realtime priority.'],
-    notes: ['The futu entry is skipped when OpenD is not configured.'],
+    notes: ['The futu entry is skipped unless complete cloud OAuth credentials or OpenD are configured.'],
   },
   'settings.data_source.stock_index_remote': {
     title: 'Remote Stock Index',

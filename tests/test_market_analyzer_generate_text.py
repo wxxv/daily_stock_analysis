@@ -112,6 +112,30 @@ _OPENAI_COMPATIBILITY_PAYLOAD_FIXTURES = [
 # ---------------------------------------------------------------------------
 
 class TestAnalyzerGenerateText:
+    @pytest.mark.parametrize("token_limit", [8192, 32768])
+    def test_stock_analysis_budget_reaches_streaming_dispatch(self, token_limit):
+        from src.config import Config
+
+        analyzer = self._make_analyzer()
+        analyzer._config_override = Config(
+            litellm_model="openai/test-model", gemini_request_delay=0,
+            analysis_max_output_tokens=token_limit, report_integrity_enabled=False,
+        )
+        response = json.dumps({
+            "sentiment_score": 50, "trend_prediction": "震荡", "operation_advice": "观望",
+            "decision_type": "hold", "analysis_summary": "等待确认",
+            "dashboard": {"core_conclusion": {"one_sentence": "观望"}},
+        })
+        stream = [SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=response))], usage=None)]
+        with patch.object(analyzer, "is_available", return_value=True), \
+             patch.object(analyzer, "_get_skill_prompt_sections", return_value=("", "", True)), \
+             patch.object(analyzer, "_dispatch_litellm_completion", return_value=iter(stream)) as dispatch, \
+             patch("src.analyzer.persist_llm_usage"):
+            result = analyzer.analyze({"code": "HK01024", "stock_name": "快手"})
+        assert result.success
+        assert dispatch.call_args.args[1]["max_tokens"] == token_limit
+        assert dispatch.call_args.args[1]["stream"] is True
+
     def _make_analyzer(self):
         """Return a minimally configured GeminiAnalyzer with _call_litellm mocked."""
         with patch("src.analyzer.get_config") as mock_cfg:

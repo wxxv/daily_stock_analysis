@@ -275,6 +275,7 @@ daily_stock_analysis/
 | `LLM_HERMES_BASE_URL` | Hermes 本地 loopback `/v1` 地址；默认 `http://127.0.0.1:8642/v1`，不支持远程地址 | `http://127.0.0.1:8642/v1` | 否 |
 | `LLM_HERMES_MODELS` | Hermes 原始模型列表；Phase 3 默认 `hermes-agent`，运行时 route 为 `openai/hermes-agent`，不支持 Vision / stream / tools / Agent tools | `hermes-agent` | 否 |
 | `LITELLM_CONFIG` | 高级模型路由 YAML 配置文件路径（高级） | - | 否 |
+| `ANALYSIS_MAX_OUTPUT_TOKENS` | LiteLLM 个股结构化分析输出上限（正整数）；推理模型思考与正文可能共用额度。遇到 JSON 截断可在模型允许范围内提高，例如 `32768`，可能增加费用和耗时；不控制大盘复盘、选股、问股和本地 CLI 的独立输出限制。Actions 可设同名 Repository Variable。 | `8192` | 否 |
 | `LLM_PROMPT_CACHE_TELEMETRY_ENABLED` | Provider prompt cache usage / diagnostics 遥测；不控制 provider implicit cache | `true` | 否 |
 | `LLM_PROMPT_CACHE_HINTS_ENABLED` | 主分析路径是否主动发送已验证的 provider-specific prompt cache hints；Agent 路径当前仅记录 diagnostics，不主动发 hints；默认关闭 | `false` | 否 |
 | `LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL` | Prompt cache 诊断级别：`off` / `basic` / `debug`；basic/debug 仅在 debug 日志和测试可观察对象中提供脱敏诊断，不作为公开 Usage API 或普通设置页输出 | `off` | 否 |

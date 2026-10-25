@@ -4228,7 +4228,7 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
             # 设置生成配置
             generation_config = {
                 "temperature": config.llm_temperature,
-                "max_output_tokens": 8192,
+                "max_output_tokens": getattr(config, "analysis_max_output_tokens", 8192),
             }
 
             logger.info(f"[LLM调用] 开始调用 {model_name}...")
