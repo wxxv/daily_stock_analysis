@@ -13,6 +13,9 @@ without changing downstream consumers. Adds HK/US-specific fields:
 - ``earnings.dividend.currency`` — trading / dividend currency from
   ``info.currency`` (e.g. HKD for 0700.HK). Used to suffix 港元/美元/元 for
   per-share cash dividends and to scope the TTM yield denominator.
+- ``earnings.financial_report.field_periods`` — per-field source basis and
+  period end. Statement values, TTM info fields and estimated TTM profit stay
+  distinct; an unknown statement period is never labelled as a known quarter.
 - ``earnings.dividend.ttm_dividend_yield_pct`` — computed as
   ``ttm_cash_dividend_per_share / latest_price * 100``, both sides in the
   trading currency (info.currentPrice/regularMarketPrice/previousClose).
@@ -192,8 +195,8 @@ class YfinanceFundamentalAdapter:
         # for HK ADRs that is often CNY even when the stock trades in HKD. Dividends
         # and live price are paid/quoted in `currency` — keep them separate so the
         # renderer can suffix per-block currency tags correctly.
-        financial_currency = str(info.get("financialCurrency") or info.get("currency") or "").upper() or None
-        dividend_currency = str(info.get("currency") or info.get("financialCurrency") or "").upper() or None
+        financial_currency = str(info.get("financialCurrency") or "").upper() or None
+        dividend_currency = str(info.get("currency") or "").upper() or None
 
         # ---------------- growth block ----------------
         growth_payload: Dict[str, Any] = {
@@ -211,6 +214,8 @@ class YfinanceFundamentalAdapter:
         revenue_latest: Optional[float] = None
         net_profit_latest: Optional[float] = None
         operating_cash_flow_latest: Optional[float] = None
+        cashflow_date: Optional[str] = None
+        field_periods: Dict[str, Any] = {}
         revenue_row = None
         net_profit_row = None
 
@@ -240,18 +245,37 @@ class YfinanceFundamentalAdapter:
             result["errors"].append(f"quarterly_cashflow:{type(exc).__name__}")
             cashflow_df = None
         if cashflow_df is not None and not cashflow_df.empty:
+            if all(isinstance(col, (datetime, pd.Timestamp)) for col in cashflow_df.columns):
+                cashflow_df = cashflow_df.reindex(columns=sorted(cashflow_df.columns, reverse=True))
+            cashflow_timestamp = pd.to_datetime(cashflow_df.columns[0], errors="coerce")
+            if pd.notna(cashflow_timestamp):
+                cashflow_date = cashflow_timestamp.date().isoformat()
             operating_cash_flow_latest = _latest_value(_pick_row(cashflow_df, _CASHFLOW_OP_KEYS))
+
+        for key, value, period_end in (("revenue", revenue_latest, report_date),
+                                       ("net_profit_parent", net_profit_latest, report_date),
+                                       ("operating_cash_flow", operating_cash_flow_latest, cashflow_date)):
+            if value is not None:
+                field_periods[key] = {"basis": "statement", "period_end": period_end}
 
         # Fallback to TTM aggregates from .info when quarterly statements are
         # unavailable — still produces a non-empty row.
         if revenue_latest is None:
             revenue_latest = _safe_float(info.get("totalRevenue"))
+            if revenue_latest is not None:
+                field_periods["revenue"] = {"basis": "ttm", "period_end": None}
         if operating_cash_flow_latest is None:
             operating_cash_flow_latest = _safe_float(info.get("operatingCashflow"))
+            if operating_cash_flow_latest is not None:
+                field_periods["operating_cash_flow"] = {"basis": "ttm", "period_end": None}
         if net_profit_latest is None and revenue_latest is not None:
             margin = _safe_float(info.get("profitMargins"))
             if margin is not None:
-                net_profit_latest = revenue_latest * margin
+                # .info profitMargins is a TTM ratio; do not apply it to a single statement quarter.
+                ttm_revenue = _safe_float(info.get("totalRevenue"))
+                if ttm_revenue is not None:
+                    net_profit_latest = ttm_revenue * margin
+                    field_periods["net_profit_parent"] = {"basis": "estimated_ttm", "period_end": None}
 
         # Statement-derived YoY (requires the same quarter a year earlier) is preferred
         # over .info ratios; otherwise keep the TTM growth values already set
@@ -273,8 +297,9 @@ class YfinanceFundamentalAdapter:
             "operating_cash_flow": operating_cash_flow_latest,
             "roe": growth_payload.get("roe"),
             "currency": financial_currency,
+            "field_periods": field_periods,
         }
-        if any(v is not None and v != "" for v in financial_report.values()):
+        if any(v is not None and v != "" for key, v in financial_report.items() if key != "field_periods"):
             result.setdefault("earnings", {})["financial_report"] = financial_report
             result["source_chain"].append("earnings.financial_report:yfinance")
 

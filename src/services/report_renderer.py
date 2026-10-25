@@ -18,6 +18,8 @@ from src.config import get_config
 from src.core.trading_calendar import get_report_now
 from src.reports.news_sources import format_news_sources
 from src.reports.report_time import format_report_time
+from src.reports.volume_context import format_volume_analysis, format_volume_reference
+from src.reports.financial_context import format_financial_basis
 from src.market_phase_summary import format_public_market_status_line, format_public_phase_pack_excerpt
 from src.report_language import (
     get_localized_stock_name,
@@ -163,6 +165,10 @@ def render(
         }.get(display_action, display_action)
         _, se, _ = get_signal_level(signal_action or display_advice, r.sentiment_score, report_language)
         rn = get_localized_stock_name(r.name, r.code, report_language)
+        fundamental = r.fundamental_context if isinstance(r.fundamental_context, dict) else {}
+        earnings_block = fundamental.get("earnings")
+        earnings_data = earnings_block.get("data") if isinstance(earnings_block, dict) else None
+        earnings = earnings_data if isinstance(earnings_data, dict) else {}
         sorted_enriched.append({
             "result": r,
             "empty_news_disclosure": empty_news_disclosure(r, report_language),
@@ -171,6 +177,9 @@ def render(
             "stock_name": _escape_md(rn),
             "localized_operation_advice": display_advice,
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),
+            "financial_basis": format_financial_basis(
+                earnings.get("financial_report") or {}, earnings.get("dividend") or {}, report_language
+            ),
         })
 
     display_buckets = [
@@ -231,6 +240,9 @@ def render(
         "clean_sniper": _clean_sniper_value,
         "format_news_sources": format_news_sources,
         "format_report_time": format_report_time,
+        "format_volume_reference": format_volume_reference,
+        "format_volume_analysis": format_volume_analysis,
+        "format_financial_basis": format_financial_basis,
         "failed_checks": failed_checks,
         "phase_pack_excerpt": phase_pack_excerpt,
         "history_by_code": {},

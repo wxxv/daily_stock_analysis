@@ -66,15 +66,15 @@ class MarketIndex:
     code: str                    # 指数代码
     name: str                    # 指数名称
     current: float = 0.0         # 当前点位
-    change: float = 0.0          # 涨跌点数
-    change_pct: float = 0.0      # 涨跌幅(%)
+    change: Optional[float] = None          # 未知昨收时不能计算涨跌
+    change_pct: Optional[float] = None      # 涨跌幅(%)
     open: float = 0.0            # 开盘点位
     high: float = 0.0            # 最高点位
     low: float = 0.0             # 最低点位
-    prev_close: float = 0.0      # 昨收点位
+    prev_close: Optional[float] = None      # 昨收点位
     volume: float = 0.0          # 成交量（手）
     amount: float = 0.0          # 成交额（元）
-    amplitude: float = 0.0       # 振幅(%)
+    amplitude: Optional[float] = None       # 振幅(%)
     date: Optional[str] = None   # 数据源提供的行情日期；不能用抓取时间代替
     
     def to_dict(self) -> Dict[str, Any]:
@@ -340,7 +340,9 @@ class MarketAnalyzer:
             return f"{amount_raw / 1e8:.0f}"
         return f"{amount_raw:.0f}"
 
-    def _get_index_change_arrow(self, change_pct: float) -> str:
+    def _get_index_change_arrow(self, change_pct: Optional[float]) -> str:
+        if change_pct is None:
+            return ""
         if change_pct == 0:
             return "⚪"
         color_scheme = getattr(getattr(self, "config", None), "market_review_color_scheme", "green_up")
@@ -1399,7 +1401,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             amount_raw = idx.amount or 0.0
             amount_str = self._format_turnover_value(amount_raw)
             lines.append(
-                f"| {idx.name} | {idx.current:.2f} | {arrow} {idx.change_pct:+.2f}% | "
+                f"| {idx.name} | {idx.current:.2f} | {arrow} {self._format_signed_pct(idx.change_pct)} | "
                 f"{self._format_optional_number(idx.open)} | {self._format_optional_number(idx.high)} | "
                 f"{self._format_optional_number(idx.low)} | {self._format_optional_pct(idx.amplitude)} | {amount_str} |"
             )
@@ -1407,6 +1409,10 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         date_label = "Source quote dates" if self._get_review_language() == "en" else "数据源行情日期"
         source_dates = "；".join(f"{idx.name}: {idx.date or missing_date}" for idx in overview.indices)
         lines.extend(["", f"> {date_label}: {source_dates}"])
+        if any(idx.change_pct is None for idx in overview.indices):
+            lines.extend(["", "> Previous close unavailable for some indices: change and amplitude are unknown; do not infer a flat session."
+                          if self._get_review_language() == "en" else
+                          "> 部分指数缺少有效昨收：涨跌幅、振幅待确认，不代表收平；不参与平均涨跌幅计算。"])
         return "\n".join(lines)
 
     def _build_sector_block(self, overview: MarketOverview) -> str:
@@ -1506,7 +1512,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
     @staticmethod
     def _format_optional_pct(value: float) -> str:
-        return "N/A" if value in (None, 0, 0.0) else f"{value:.2f}%"
+        return "N/A" if value is None else f"{value:.2f}%"
 
     @staticmethod
     def _format_signed_pct(value: Any) -> str:
@@ -1572,7 +1578,8 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
         if not index_available:
             data_quality = "unavailable"
-        elif all(dimension["available"] for dimension in dimensions.values()):
+        elif (all(dimension["available"] for dimension in dimensions.values())
+              and len(index_changes) == len(overview.indices)):
             data_quality = "ok"
         else:
             data_quality = "partial"
@@ -1700,8 +1707,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         # 指数行情信息（简洁格式，不用emoji）
         indices_text = ""
         for idx in overview.indices:
-            direction = "↑" if idx.change_pct > 0 else "↓" if idx.change_pct < 0 else "-"
-            indices_text += f"- {idx.name}: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
+            indices_text += f"- {idx.name}: {idx.current:.2f} ({self._format_signed_pct(idx.change_pct)})\n"
         
         # 板块信息
         top_sectors_text = self._format_ranking_summary(overview.top_sectors)
@@ -1949,23 +1955,26 @@ Output the report content directly, no extra commentary.
             ),
             None,
         )
-        if mood_index:
+        if mood_index and mood_index.change_pct is not None:
             if mood_index.change_pct > 1:
                 market_mood = self._get_market_mood_text("strong_up", template_language)
             elif mood_index.change_pct > 0:
                 market_mood = self._get_market_mood_text("mild_up", template_language)
+            elif mood_index.change_pct == 0:
+                market_mood = self._get_market_mood_text("range", template_language)
             elif mood_index.change_pct > -1:
                 market_mood = self._get_market_mood_text("mild_down", template_language)
             else:
                 market_mood = self._get_market_mood_text("strong_down", template_language)
         else:
-            market_mood = self._get_market_mood_text("range", template_language)
+            market_mood = ("unconfirmed direction (index change unavailable)" if template_language == "en"
+                           else "方向待确认（缺少指数涨跌幅）")
         
         # 指数行情（简洁格式）
         indices_text = ""
         for idx in overview.indices[:4]:
             marker = self._get_index_change_arrow(idx.change_pct)
-            indices_text += f"- **{idx.name}**: {idx.current:.2f} ({marker} {idx.change_pct:+.2f}%)\n"
+            indices_text += f"- **{idx.name}**: {idx.current:.2f} ({marker} {self._format_signed_pct(idx.change_pct)})\n"
         
         # 板块信息
         separator = ", " if template_language == "en" else "、"
@@ -2194,7 +2203,7 @@ if __name__ == "__main__":
     print(f"日期: {overview.date}")
     print(f"指数数量: {len(overview.indices)}")
     for idx in overview.indices:
-        print(f"  {idx.name}: {idx.current:.2f} ({idx.change_pct:+.2f}%)")
+        print(f"  {idx.name}: {idx.current:.2f} ({analyzer._format_signed_pct(idx.change_pct)})")
     print(f"上涨: {overview.up_count} | 下跌: {overview.down_count}")
     print(f"成交额: {overview.total_amount:.0f}亿")
     

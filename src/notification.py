@@ -27,6 +27,8 @@ from src.enums import ReportType
 from src.core.trading_calendar import get_report_now
 from src.reports.news_sources import format_news_sources
 from src.reports.report_time import format_report_time
+from src.reports.financial_context import format_financial_basis
+from src.reports.volume_context import format_volume_analysis, format_volume_reference
 from src.market_phase_summary import format_public_market_status_line, format_public_phase_pack_excerpt
 from src.notification_routing import (
     get_notification_route_config,
@@ -1470,8 +1472,9 @@ class NotificationService(
                     # 量能分析
                     if vol_data:
                         report_lines.extend([
-                            f"**{labels['volume_label']}**: {labels['volume_ratio_label']} {self._format_text(vol_data.get('volume_ratio'))} ({vol_data.get('volume_status') or 'N/A'}) | "
-                            f"{labels['turnover_rate_label']} {self._format_percent(vol_data.get('turnover_rate'))}",
+                            format_volume_analysis(result.market_snapshot, vol_data, report_language),
+                            "",
+                            format_volume_reference(result.market_snapshot, report_language),
                             "",
                         ])
                         if vol_data.get('volume_meaning'):
@@ -2201,7 +2204,8 @@ class NotificationService(
     def _format_amount_cn(cls, value: Any, currency: Optional[str] = None) -> str:
         """Format absolute amounts in 亿/万 + currency suffix; returns N/A on non-numeric.
 
-        ``currency`` accepts ``USD``/``HKD``/``CNY``; unknown values fall back to 元.
+        Known currencies use localized units; unknown codes stay visible.
+        Only legacy payloads without a currency retain the default 元 suffix.
         """
         try:
             amount = float(value)
@@ -2211,7 +2215,8 @@ class NotificationService(
             return "N/A"
         sign = "-" if amount < 0 else ""
         abs_amount = abs(amount)
-        suffix = cls._CURRENCY_SUFFIX.get((currency or "").upper(), "元")
+        code = (currency or "").upper()
+        suffix = cls._CURRENCY_SUFFIX.get(code, f" ({code})" if code else "元")
         if abs_amount >= 1e8:
             return f"{sign}{abs_amount / 1e8:.2f} 亿{suffix}"
         if abs_amount >= 1e4:
@@ -2233,7 +2238,8 @@ class NotificationService(
             return "N/A"
         if amount != amount:  # NaN
             return "N/A"
-        suffix = cls._CURRENCY_SUFFIX.get((currency or "").upper(), "元")
+        code = (currency or "").upper()
+        suffix = cls._CURRENCY_SUFFIX.get(code, f" ({code})" if code else "元")
         return f"{amount:.4f} {suffix}"
 
     @staticmethod
@@ -2318,7 +2324,7 @@ class NotificationService(
         report_language = self._get_report_language(result)
         labels = get_report_labels(report_language)
 
-        self._append_financial_summary(lines, blocks, labels)
+        self._append_financial_summary(lines, blocks, labels, report_language)
         self._append_shareholder_return(lines, blocks, labels)
         self._append_institutional_flow(lines, blocks, labels)
         self._append_related_boards(lines, blocks, labels)
@@ -2328,10 +2334,13 @@ class NotificationService(
         lines: List[str],
         blocks: Dict[str, Any],
         labels: Dict[str, str],
+        report_language: str = "zh",
     ) -> None:
         report = blocks.get("financial_report") or {}
         growth = blocks.get("growth") or {}
         currency = report.get("currency") if isinstance(report.get("currency"), str) else None
+        if "currency" in report and not currency:
+            currency = "UNKNOWN"
         cells = {
             "report_date": self._format_text(report.get("report_date")),
             "revenue": self._format_amount_cn(report.get("revenue"), currency),
@@ -2347,6 +2356,8 @@ class NotificationService(
 
         lines.extend([
             f"### 💼 {labels['financial_summary_heading']}",
+            "",
+            f"> {format_financial_basis(report, blocks.get('dividend'), report_language)}",
             "",
             (
                 f"| {labels['report_date_label']} | {labels['revenue_label']} | "
@@ -2376,7 +2387,9 @@ class NotificationService(
         # which can differ from the financial-statement currency (e.g. HK ADRs
         # often report `financialCurrency=CNY` but pay dividends in HKD).
         dividend_currency = dividend.get("currency") if isinstance(dividend.get("currency"), str) else None
-        if not dividend_currency:
+        if "currency" in dividend and not dividend_currency:
+            dividend_currency = "UNKNOWN"
+        elif not dividend_currency:
             dividend_currency = report.get("currency") if isinstance(report.get("currency"), str) else None
         events = dividend.get("events") if isinstance(dividend.get("events"), list) else []
         latest_event = events[0] if events else {}

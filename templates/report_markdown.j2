@@ -32,6 +32,10 @@
 
 ## {{ e.signal_emoji }} {{ e.stock_name }} ({{ result.code }})
 
+{% if e.financial_basis %}
+> {{ e.financial_basis }}
+{% endif %}
+
 {% if e.empty_news_disclosure %}
 {{ e.empty_news_disclosure }}
 {% endif %}
@@ -106,7 +110,9 @@
 
 {% set vol_data = data_persp.get('volume_analysis', {}) %}
 {% if vol_data %}
-**{{ labels.volume_label }}**: {{ labels.volume_ratio_label }} {{ vol_data.get('volume_ratio') if vol_data.get('volume_ratio') is not none else 'N/A' }} ({{ vol_data.get('volume_status') or 'N/A' }}) | {{ labels.turnover_rate_label }} {{ vol_data.get('turnover_rate') ~ '%' if vol_data.get('turnover_rate') is not none else 'N/A' }}
+{{ format_volume_analysis(result.market_snapshot, vol_data, report_language) }}
+
+{{ format_volume_reference(result.market_snapshot, report_language) }}
 {% if vol_data.get('volume_meaning') %}💡 *{{ vol_data.volume_meaning }}*{% endif %}
 {% endif %}
 

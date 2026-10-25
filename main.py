@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from dotenv import dotenv_values
 from src.config import setup_env
+from src.reports.failures import with_analysis_failures
 
 _INITIAL_PROCESS_ENV = dict(os.environ)
 setup_env()
@@ -757,7 +758,8 @@ def _save_reused_market_review_report(
     if not any(body.startswith(item) for item in ("# 🎯 大盘复盘", "# 🎯 Market Review")):
         body = f"{title}\n\n{body}"
     try:
-        date_str = datetime.now().strftime('%Y%m%d')
+        from src.core.trading_calendar import get_report_now
+        date_str = get_report_now(getattr(config, "stock_list", [])).strftime('%Y%m%d')
         report_filename = f"market_review_{date_str}.md"
         filepath = notifier.save_report_to_file(body, report_filename)
         logger.info(
@@ -1152,14 +1154,19 @@ def run_full_analysis(
             return _return_with_auto_backtest(False)
 
         # Issue #190: 合并推送（个股+大盘复盘）
-        if merge_notification and (results or market_report) and not args.no_notify:
+        analysis_failures = getattr(pipeline, "analysis_failures", {})
+        has_analysis_failures = isinstance(analysis_failures, dict) and bool(analysis_failures)
+        if merge_notification and (results or market_report or has_analysis_failures) and not args.no_notify:
             parts = []
             if market_report:
                 parts.append(f"# 📈 大盘复盘\n\n{market_report}")
-            if results:
+            if results or has_analysis_failures:
                 dashboard_content = pipeline.notifier.generate_aggregate_report(
                     results,
                     getattr(config, 'report_type', 'simple'),
+                )
+                dashboard_content = with_analysis_failures(
+                    dashboard_content, analysis_failures, getattr(config, "report_language", "zh")
                 )
                 parts.append(f"# 🚀 个股决策仪表盘\n\n{dashboard_content}")
             if parts:
@@ -1203,10 +1210,13 @@ def run_full_analysis(
                     full_content += f"# 📈 大盘复盘\n\n{market_report}\n\n---\n\n"
 
                 # 添加个股决策仪表盘（使用 NotificationService 生成，按 report_type 分支）
-                if results:
+                if results or has_analysis_failures:
                     dashboard_content = pipeline.notifier.generate_aggregate_report(
                         results,
                         getattr(config, 'report_type', 'simple'),
+                    )
+                    dashboard_content = with_analysis_failures(
+                        dashboard_content, analysis_failures, getattr(config, "report_language", "zh")
                     )
                     full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
 

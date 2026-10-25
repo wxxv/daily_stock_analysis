@@ -1048,7 +1048,7 @@ def _stock_data(markdown_text: str, generated_on: date) -> StockPoster:
         data_map.update(_table_map(table))
     ma = _labeled_value(data_section, "均线排列", "MA Alignment", limit=42)
     ma = next((label for label in ("多头排列", "空头排列") if label in ma), _compact_text(ma, limit=16))
-    volume_ratio = _labeled_line(data_section, "量能", "成交量", "Volume", limit=64)
+    volume_ratio = _labeled_line(data_section, "日线量能状态", "量能", "成交量", "Volume status", "Volume", limit=64)
     support = _mapped_value(data_map, "支撑位", "support")
     resistance = _mapped_value(data_map, "压力位", "resistance")
     for label, value, tone in (
@@ -1171,14 +1171,14 @@ def _stock_data_from_payload(
     if not change:
         change = _clean_value(persisted_snapshot.get("pct_chg"), limit=18)
     change = change or _metric_value(poster.snapshot, "涨跌", "涨跌幅")
-    ratio = _number_text(volume.get("volume_ratio"))
-    if not ratio:
-        ratio = _clean_value(persisted_snapshot.get("volume_ratio"), limit=18)
-    ratio = ratio or _metric_value(poster.snapshot, "量比")
-    turnover = _number_text(volume.get("turnover_rate"), suffix="%")
-    if not turnover:
-        turnover = _clean_value(persisted_snapshot.get("turnover_rate"), limit=18)
-    turnover = turnover or _metric_value(poster.snapshot, "换手", "换手率")
+    if "volume_ratio" in persisted_snapshot:
+        ratio = _clean_value(persisted_snapshot["volume_ratio"], limit=18)
+    else:
+        ratio = _number_text(volume.get("volume_ratio")) or _metric_value(poster.snapshot, "量比")
+    if "turnover_rate" in persisted_snapshot:
+        turnover = _clean_value(persisted_snapshot["turnover_rate"], limit=18)
+    else:
+        turnover = _number_text(volume.get("turnover_rate"), suffix="%") or _metric_value(poster.snapshot, "换手", "换手率")
     positive_tone = _stock_positive_tone(poster.code)
     negative_tone = _opposite_color(positive_tone)
     poster.snapshot = [

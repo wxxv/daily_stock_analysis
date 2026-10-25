@@ -30,7 +30,7 @@ def _make_mock_hist(close: float, prev_close: float, high: float = None, low: fl
         'High': [prev_close + 1, high],
         'Low': [prev_close - 1, low],
         'Volume': [1000000.0, 1200000.0],
-    }, index=pd.DatetimeIndex(['2025-02-16', '2025-02-17']))
+    }, index=pd.DatetimeIndex(['2025-02-13', '2025-02-14']))
 
 
 def _make_mock_yf(hist_df: pd.DataFrame):
@@ -78,8 +78,8 @@ class TestFetchYfTickerData(unittest.TestCase):
 
         self.assertIsNone(result)
 
-    def test_single_row_history_uses_same_as_prev(self):
-        """仅一行数据时 prev_close 等于 current，change_pct 为 0"""
+    def test_single_row_history_keeps_previous_close_unknown(self):
+        """仅一行数据不能把当天收盘当作昨收。"""
         mock_hist = _make_mock_hist(close=5000.0, prev_close=5000.0)
         mock_hist = mock_hist.iloc[[-1]]
         mock_yf = _make_mock_yf(mock_hist)
@@ -87,7 +87,9 @@ class TestFetchYfTickerData(unittest.TestCase):
         result = self.fetcher._fetch_yf_ticker_data(mock_yf, '^GSPC', '标普500指数', 'SPX')
 
         self.assertIsNotNone(result)
-        self.assertEqual(result['change_pct'], 0.0)
+        self.assertEqual(result['current'], 5000.0)
+        for field in ('prev_close', 'change', 'change_pct', 'amplitude'):
+            self.assertIsNone(result[field])
 
 
 class TestGetUsMainIndices(unittest.TestCase):

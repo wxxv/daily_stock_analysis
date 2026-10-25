@@ -84,7 +84,7 @@ def test_yfinance_keeps_jp_kr_suffix_codes_and_indices() -> None:
 
     captured = []
 
-    def fake_fetch(_yf, yf_code, name, return_code):
+    def fake_fetch(_yf, yf_code, name, return_code, *, market=None):
         captured.append((yf_code, name, return_code))
         return {"code": return_code, "name": name, "current": 1.0}
 

@@ -91,7 +91,7 @@ def test_guarded_buy_has_one_consistent_plan_in_email_and_template():
                                 "position_strategy": {"suggested_position": "4-5成", "entry_plan": "现价先买2成"},
                                 "action_checklist": ["现价买入2成"],
                             }})
-    stabilize_decision_with_structure(result, None, {"capital_flow": {"status": "not_supported", "data": {}}})
+    stabilize_decision_with_structure(result, None, {"capital_flow": {"status": "failed", "data": {}}})
     assert result.decision_type == "hold"
     assert result.dashboard["battle_plan"]["sniper_points"]["stop_loss"] == "25.50"
     assert "恢复" not in result.get_position_advice()

@@ -21,6 +21,9 @@ from typing import Optional, Dict, Any, List, Tuple, Callable, Union
 import litellm
 from json_repair import repair_json
 from src.reports.report_time import format_report_time
+from src.reports.financial_context import format_financial_basis
+from src.reports.volume_context import ground_volume_analysis
+from src.core.trading_calendar import get_market_for_stock
 from litellm import Router
 
 from src.agent.llm_adapter import (
@@ -1093,6 +1096,29 @@ def stabilize_decision_with_structure(
 
         flow_bias, flow_reason = _capital_flow_bias_with_status(fundamental_context)
         if flow_bias == "unavailable":
+            if (get_market_for_stock(getattr(result, "code", "")) == "hk"
+                    and flow_reason in {"not_supported", "unsupported"}):
+                _set_decision_stability_unavailable(
+                    result, language, current_price=current_price, support=support,
+                    resistance=resistance, flow_status=flow_reason,
+                )
+                limitation = ("港股资金流能力不支持，未以该缺失单独调整买卖方向；资金确认不足，置信度不高于中。"
+                              if language == "zh" else
+                              "HK capital flow is unsupported; missing flow alone does not change direction. Confidence is capped at medium.")
+                dashboard = result.dashboard
+                phase = dashboard.setdefault("phase_decision", {})
+                if isinstance(phase, dict):
+                    limitations = phase.get("data_limitations")
+                    phase["data_limitations"] = list(limitations) if isinstance(limitations, list) else []
+                    if limitation not in phase["data_limitations"]:
+                        phase["data_limitations"].append(limitation)
+                    reason = str(phase.get("confidence_reason") or "")
+                    if limitation not in reason:
+                        phase["confidence_reason"] = (reason + "; " + limitation).lstrip("; ")
+                dashboard["decision_stability"]["reason"] = limitation
+                if str(result.confidence_level).lower() in {"高", "high", "높음"}:
+                    result.confidence_level = localize_confidence_level("medium", language)
+                return
             if isinstance(fundamental_context, dict) and "capital_flow" in fundamental_context:
                 if decision_type == "buy" or advice_decision_type == "buy":
                     _downgrade_buy_without_capital_flow(
@@ -4211,6 +4237,7 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
             # 使用 litellm 调用（支持完整性校验重试）
             current_prompt = prompt
             retry_count = 0
+            empty_response_retries = 0
             max_retries = config.report_integrity_retry if config.report_integrity_enabled else 0
 
             while True:
@@ -4236,7 +4263,13 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
                         model_used = exc.last_model
                         llm_usage = exc.last_usage
                     else:
-                        raise
+                        if "empty response" not in str(exc).lower() or empty_response_retries >= 1:
+                            raise
+                        empty_response_retries += 1
+                        current_prompt = prompt
+                        logger.warning("[LLM空响应] %s(%s): retrying once with original context", name, code)
+                        _emit_progress(96, f"{name}：模型未返回内容，正在重试（1/1）")
+                        continue
                 elapsed = time.time() - start_time
 
                 # 记录响应信息
@@ -4261,6 +4294,7 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
                 result.raw_response = response_text
                 result.search_performed = bool(news_context)
                 result.market_snapshot = self._build_market_snapshot(context)
+                ground_volume_analysis(result)
                 result.model_used = model_used
                 result.report_language = report_language
                 normalize_chip_structure_availability(result, context.get("chip"))
@@ -4557,6 +4591,14 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
             ttm_cash = dividend_metrics.get("ttm_cash_dividend_per_share", "N/A")
             ttm_count = dividend_metrics.get("ttm_event_count", "N/A")
             report_date = financial_report.get("report_date", "N/A")
+            financial_basis = format_financial_basis(financial_report, dividend_metrics, report_language, for_prompt=True)
+            if financial_basis:
+                prompt += f"\n> {financial_basis}\n"
+            financial_report = {key: value if value is not None else "N/A" for key, value in financial_report.items()}
+            ttm_yield = ttm_yield if ttm_yield is not None else "N/A"
+            ttm_cash = ttm_cash if ttm_cash is not None else "N/A"
+            ttm_count = ttm_count if ttm_count is not None else "N/A"
+            report_date = report_date if report_date is not None else "N/A"
             if english:
                 prompt += f"""
 ### Financials and Dividends (value-investing view)
@@ -5219,6 +5261,13 @@ Output the complete Decision Dashboard in JSON format."""
             "volume": self._format_volume(today.get('volume')),
             "amount": self._format_amount(today.get('amount')),
         }
+        today_volume = _coerce_numeric_value(today.get("volume"))
+        previous_volume = _coerce_numeric_value(yesterday.get("volume"))
+        if today_volume is not None and previous_volume is not None and previous_volume > 0:
+            snapshot["daily_volume_vs_previous"] = round(today_volume / previous_volume, 4)
+        five_day_ratio = _coerce_numeric_value((context.get("trend_analysis") or {}).get("volume_ratio_5d"))
+        if five_day_ratio is not None and five_day_ratio > 0:
+            snapshot["daily_volume_vs_5d"] = round(five_day_ratio, 4)
 
         if realtime:
             snapshot.update({

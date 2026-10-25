@@ -100,6 +100,8 @@ from src.services.stock_list_parser import AnalysisTarget, ParseStatus
 from src.services.decision_signal_summary import summarize_decision_signal
 from src.enums import ReportType
 from src.reports.report_time import build_report_time, normalize_next_session_dates
+from src.reports.failures import with_analysis_failures
+from src.reports.volume_context import ground_volume_analysis
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
 from src.core.trading_calendar import (
     build_market_phase_context,
@@ -917,6 +919,7 @@ class StockAnalysisPipeline:
             if result:
                 fill_price_position_if_needed(result, trend_result, realtime_quote)
                 action_source_advice = getattr(result, "operation_advice", None)
+                ground_volume_analysis(result)
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
                 adjustments = apply_phase_decision_guardrails(
                     result,
@@ -1106,6 +1109,7 @@ class StockAnalysisPipeline:
                 'bias_ma5': trend_result.bias_ma5,
                 'bias_ma10': trend_result.bias_ma10,
                 'volume_status': trend_result.volume_status.value,
+                'volume_ratio_5d': trend_result.volume_ratio_5d,
                 'volume_trend': trend_result.volume_trend,
                 'buy_signal': trend_result.buy_signal.value,
                 'signal_score': trend_result.signal_score,
@@ -1747,6 +1751,7 @@ class StockAnalysisPipeline:
                     result.change_pct = realtime_data.get("change_pct")
                 action_before_guardrail = getattr(result, "action", None)
                 advice_before_guardrail = getattr(result, "operation_advice", None)
+                ground_volume_analysis(result)
                 stabilize_decision_with_structure(result, trend_result, fundamental_context)
                 self._refresh_decision_action_for_final_result(
                     result,
@@ -3495,7 +3500,8 @@ class StockAnalysisPipeline:
             分析结果列表
         """
         start_time = time.time()
-        
+        self.analysis_failures: Dict[str, str] = {}
+
         # 使用配置中的股票列表
         if stock_codes is None:
             self.config.refresh_stock_list()
@@ -3628,10 +3634,15 @@ class StockAnalysisPipeline:
                                 fallback_code=code,
                             )
                     elif result and not result.success:
+                        self.analysis_failures[code] = (
+                            "empty_response" if "empty response" in (result.error_message or "").lower() else "analysis_failed"
+                        )
                         logger.warning(
                             f"[{code}] 分析结果标记为失败，不计入汇总: "
                             f"{result.error_message or '未知原因'}"
                         )
+                    elif not dry_run:
+                        self.analysis_failures[code] = "analysis_failed"
 
                     # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
                     if idx < len(stock_codes) - 1 and analysis_delay > 0:
@@ -3644,6 +3655,8 @@ class StockAnalysisPipeline:
 
                 except Exception as e:
                     logger.error(f"[{code}] 任务执行失败: {e}")
+                    if not dry_run:
+                        self.analysis_failures[code] = "analysis_failed"
         
         # 统计
         elapsed_time = time.time() - start_time
@@ -3676,15 +3689,17 @@ class StockAnalysisPipeline:
         logger.info(f"成功: {success_count}, 失败: {fail_count}, 耗时: {elapsed_time:.2f} 秒")
         
         # 保存报告到本地文件（无论是否推送通知都保存）
-        if results and not dry_run:
+        if (results or self.analysis_failures) and not dry_run:
             self._save_local_report(results, report_type)
 
         # 发送通知（单股推送模式下跳过汇总推送，避免重复）
-        if results and send_notification and not dry_run:
+        if (results or self.analysis_failures) and send_notification and not dry_run:
             if single_stock_notify:
                 # 单股推送模式：只保存汇总报告，不再重复推送
                 logger.info("单股推送模式：跳过汇总推送，仅保存报告到本地")
                 self._send_notifications(results, report_type, skip_push=True)
+                if self.analysis_failures:
+                    self._send_notifications([], report_type)
             elif merge_notification:
                 # 合并模式（Issue #190）：仅保存，不推送，由 main 层合并个股+大盘后统一发送
                 logger.info("合并推送模式：跳过本次推送，将在个股+大盘复盘后统一发送")
@@ -4062,6 +4077,10 @@ class StockAnalysisPipeline:
                             dashboard_content = self.notifier.generate_brief_report(results)
                         else:
                             dashboard_content = self.notifier.generate_wechat_dashboard(results)
+                        dashboard_content = with_analysis_failures(
+                            dashboard_content, getattr(self, "analysis_failures", {}),
+                            getattr(self.config, "report_language", "zh"),
+                        )
                         logger.info(f"企业微信仪表盘长度: {len(dashboard_content)} 字符")
                         logger.debug(f"企业微信推送内容:\n{dashboard_content}")
                         wechat_image_bytes = None
@@ -4154,19 +4173,35 @@ class StockAnalysisPipeline:
                                         if canonical in stocks:
                                             emails.extend(emails_list)
                                     code_to_emails[r.code] = list(dict.fromkeys(emails)) if emails else None
+                            for code in getattr(self, "analysis_failures", {}):
+                                emails = []
+                                for stocks, emails_list in stock_email_groups:
+                                    if normalize_stock_code(code) in stocks:
+                                        emails.extend(emails_list)
+                                code_to_emails[code] = list(dict.fromkeys(emails)) if emails else None
                             emails_to_results: Dict[Optional[Tuple], List] = defaultdict(list)
                             for r in results:
                                 recs = code_to_emails.get(r.code)
                                 key = tuple(recs) if recs else None
                                 emails_to_results[key].append(r)
+                            for code in getattr(self, "analysis_failures", {}):
+                                recs = code_to_emails.get(code)
+                                emails_to_results.setdefault(tuple(recs) if recs else None, [])
                             for key, group_results in emails_to_results.items():
                                 receivers = list(key) if key is not None else None
 
                                 def _send_email_group(
                                     group_results=group_results,
                                     receivers=receivers,
+                                    recipient_key=key,
                                 ) -> bool:
-                                    grp_report = self._generate_aggregate_report(group_results, report_type)
+                                    group_failure_codes = [
+                                        code for code in getattr(self, "analysis_failures", {})
+                                        if (tuple(code_to_emails[code]) if code_to_emails[code] else None) == recipient_key
+                                    ]
+                                    grp_report = self._generate_aggregate_report(
+                                        group_results, report_type, failure_codes=group_failure_codes
+                                    )
                                     grp_image_bytes = None
                                     if channel.value in self.notifier._markdown_to_image_channels:
                                         group_payload = (
@@ -4437,11 +4472,17 @@ class StockAnalysisPipeline:
         self,
         results: List[AnalysisResult],
         report_type: ReportType,
+        failure_codes: Optional[List[str]] = None,
     ) -> str:
         """Generate aggregate report with backward-compatible notifier fallback."""
         generator = getattr(self.notifier, "generate_aggregate_report", None)
         if callable(generator):
-            return generator(results, report_type)
-        if report_type == ReportType.BRIEF and hasattr(self.notifier, "generate_brief_report"):
-            return self.notifier.generate_brief_report(results)
-        return self.notifier.generate_dashboard_report(results)
+            report = generator(results, report_type)
+        elif report_type == ReportType.BRIEF and hasattr(self.notifier, "generate_brief_report"):
+            report = self.notifier.generate_brief_report(results)
+        else:
+            report = self.notifier.generate_dashboard_report(results)
+        failures = getattr(self, "analysis_failures", {})
+        if failure_codes is not None:
+            failures = {code: category for code, category in failures.items() if code in failure_codes}
+        return with_analysis_failures(report, failures, getattr(getattr(self, "config", None), "report_language", "zh"))

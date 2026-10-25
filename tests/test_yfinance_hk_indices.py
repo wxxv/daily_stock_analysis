@@ -31,7 +31,7 @@ def _make_mock_hist(close: float, prev_close: float, high: float = None, low: fl
         'High': [prev_close + 100, high],
         'Low': [prev_close - 100, low],
         'Volume': [5000000000.0, 5200000000.0],
-    }, index=pd.DatetimeIndex(['2025-02-16', '2025-02-17']))
+    }, index=pd.DatetimeIndex(['2025-02-13', '2025-02-14']))
 
 
 def _make_mock_yf(hist_df: pd.DataFrame):

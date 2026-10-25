@@ -16,6 +16,7 @@ YfinanceFetcher - 兜底数据源 (Priority 4)
 
 import csv
 import logging
+import math
 from datetime import datetime
 from io import StringIO
 from typing import Optional, List, Dict, Any
@@ -305,7 +306,9 @@ class YfinanceFetcher(BaseFetcher):
 
         return df
 
-    def _fetch_yf_ticker_data(self, yf, yf_code: str, name: str, return_code: str) -> Optional[Dict[str, Any]]:
+    def _fetch_yf_ticker_data(
+        self, yf, yf_code: str, name: str, return_code: str, *, market: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         通过 yfinance 拉取单个指数/股票的行情数据。
 
@@ -319,20 +322,32 @@ class YfinanceFetcher(BaseFetcher):
             行情字典，失败时返回 None
         """
         ticker = yf.Ticker(yf_code)
-        # 取近两日数据以计算涨跌幅
-        hist = ticker.history(period='2d')
+        # Request a wider window; some indices still return only one session.
+        hist = ticker.history(period='5d')
         if hist.empty:
             return None
+        if isinstance(hist.index, pd.DatetimeIndex):
+            hist = hist.loc[~hist.index.duplicated(keep='last')].sort_index()
         today_row = hist.iloc[-1]
-        prev_row = hist.iloc[-2] if len(hist) > 1 else today_row
         price = float(today_row['Close'])
-        prev_close = float(prev_row['Close'])
-        change = price - prev_close
-        change_pct = (change / prev_close) * 100 if prev_close else 0
+        prev_close = _safe_float(hist.iloc[-2]['Close']) if len(hist) > 1 else None
+        if prev_close is not None and (not math.isfinite(prev_close) or prev_close <= 0):
+            prev_close = None
+        if prev_close is not None and market and isinstance(hist.index, pd.DatetimeIndex):
+            from src.core.trading_calendar import get_trading_dates
+
+            previous_date, quote_date = hist.index[-2].date(), hist.index[-1].date()
+            sessions = get_trading_dates(market, previous_date, quote_date)
+            if sessions is not None and (len(sessions) != 2 or sessions[-1].date() != quote_date
+                                         or sessions[0].date() != previous_date):
+                # Missing intermediate sessions cannot become a daily change.
+                prev_close = None
+        change = price - prev_close if prev_close is not None else None
+        change_pct = (change / prev_close) * 100 if prev_close is not None else None
         high = float(today_row['High'])
         low = float(today_row['Low'])
         # 振幅 = (最高 - 最低) / 昨收 * 100
-        amplitude = ((high - low) / prev_close * 100) if prev_close else 0
+        amplitude = ((high - low) / prev_close * 100) if prev_close is not None else None
         return {
             'code': return_code,
             'name': name,
@@ -384,7 +399,7 @@ class YfinanceFetcher(BaseFetcher):
         try:
             for ak_code, (yf_code, name) in yf_mapping.items():
                 try:
-                    item = self._fetch_yf_ticker_data(yf, yf_code, name, ak_code)
+                    item = self._fetch_yf_ticker_data(yf, yf_code, name, ak_code, market="cn")
                     if item:
                         results.append(item)
                         logger.debug(f"[Yfinance] 获取指数 {name} 成功")
@@ -411,7 +426,7 @@ class YfinanceFetcher(BaseFetcher):
                 if not yf_symbol:
                     continue
                 try:
-                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code)
+                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code, market="us")
                     if item:
                         results.append(item)
                         logger.debug(f"[Yfinance] 获取美股指数 {name} 成功")
@@ -443,7 +458,7 @@ class YfinanceFetcher(BaseFetcher):
         try:
             for code, (yf_symbol, name) in hk_indices.items():
                 try:
-                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code)
+                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code, market="hk")
                     if item:
                         results.append(item)
                         logger.debug(f"[Yfinance] 获取港股指数 {name} 成功")
@@ -469,7 +484,7 @@ class YfinanceFetcher(BaseFetcher):
         try:
             for code, (yf_symbol, name) in jp_indices.items():
                 try:
-                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code)
+                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code, market="jp")
                     if item:
                         results.append(item)
                         logger.debug(f"[Yfinance] 获取日本指数 {name} 成功")
@@ -492,7 +507,7 @@ class YfinanceFetcher(BaseFetcher):
         try:
             for code, (yf_symbol, name) in kr_indices.items():
                 try:
-                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code)
+                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code, market="kr")
                     if item:
                         results.append(item)
                         logger.debug(f"[Yfinance] 获取韩国指数 {name} 成功")
@@ -515,7 +530,7 @@ class YfinanceFetcher(BaseFetcher):
         try:
             for code, (yf_symbol, name) in tw_indices.items():
                 try:
-                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code)
+                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code, market="tw")
                     if item:
                         results.append(item)
                         logger.debug(f"[Yfinance] 获取台湾指数 {name} 成功")
