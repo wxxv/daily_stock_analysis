@@ -1,9 +1,11 @@
 name: 每日股票分析
 
 on:
-  # 定时触发 - 每天北京时间 18:00 (UTC 10:00)
+  # 定时触发 - 每天北京时间 00:00 (UTC 前一天 16:00)
+  # 每天推送（包括休市日）需设置 Repository Variable TRADING_DAY_CHECK_ENABLED=false。
+  # Actions 可能排队延迟，邮件在分析完成后发送，不保证整点送达。
   schedule:
-    - cron: '0 10 * * 1-5'     # 周一到周五，UTC 10:00 = 北京时间 18:00
+    - cron: '0 16 * * *'       # 每天，UTC 16:00 = 次日北京时间 00:00
   
   # 手动触发
   workflow_dispatch:
@@ -291,6 +293,10 @@ jobs:
           # 数据源
           # ==========================================
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+          # 富途云端只读行情：不依赖常驻 OpenD；仅配置完整 OAuth 对时启用。
+          FUTU_OAUTH_CLIENT_ID: ${{ vars.FUTU_OAUTH_CLIENT_ID || secrets.FUTU_OAUTH_CLIENT_ID }}
+          FUTU_OAUTH_REFRESH_TOKEN: ${{ secrets.FUTU_OAUTH_REFRESH_TOKEN }}
+          FUTU_HK_REALTIME_SOURCE_PRIORITY: ${{ vars.FUTU_HK_REALTIME_SOURCE_PRIORITY || secrets.FUTU_HK_REALTIME_SOURCE_PRIORITY || 'futu,longbridge,akshare,yfinance' }}
           # Reuse the runtime quote for offshore valuation; expose existing
           # fundamental budgets so statements can be tuned without code changes.
           ENABLE_FUNDAMENTAL_PIPELINE: ${{ vars.ENABLE_FUNDAMENTAL_PIPELINE || secrets.ENABLE_FUNDAMENTAL_PIPELINE || 'true' }}

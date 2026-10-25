@@ -152,7 +152,7 @@
 
 #### 完成
 
-默认每个**工作日 18:00（北京时间）**自动执行，也可手动触发。默认非交易日（含 A/H/US 节假日）不执行；强制运行、交易日检查、断点续传等规则见 [完整指南](docs/full-guide.md#定时任务配置)。
+默认每天 **00:00（北京时间）**触发，也可手动运行；邮件在分析完成后发送，Actions 排队可能导致延迟。交易日过滤默认开启；如需每天推送（含休市日），设置 Repository Variable `TRADING_DAY_CHECK_ENABLED=false`。跨日分析、强制运行和断点续传等规则见 [完整指南](docs/full-guide.md#定时任务配置)。
 
 ### 方式二：[客户端配置教程](https://www.bilibili.com/video/BV11FEb66Eyr/) / 本地运行 / Docker 部署
 

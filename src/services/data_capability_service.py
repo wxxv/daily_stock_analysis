@@ -133,7 +133,7 @@ _PROVIDER_DEFINITIONS: Sequence[_ProviderDefinition] = (
     ),
     _ProviderDefinition(
         name="futu",
-        label="Futu OpenD",
+        label="Futu",
         fetcher_name="FutuFetcher",
         dataset_markets={
             "quote.realtime": ("hk",),
@@ -308,10 +308,10 @@ class DataCapabilityService:
                     "status": status,
                     "priority": self._provider_priority(definition, fetcher),
                     "markets": list(definition.markets),
-                    "datasets": list(definition.datasets),
+                    "datasets": list(self._provider_dataset_markets(definition)),
                     "dataset_markets": {
                         dataset: list(markets)
-                        for dataset, markets in definition.dataset_markets.items()
+                        for dataset, markets in self._provider_dataset_markets(definition).items()
                     },
                     "warnings": warnings,
                     "last_error": self._safe_last_error(fetcher),
@@ -358,7 +358,10 @@ class DataCapabilityService:
         if name == "tickflow":
             return _truthy(getattr(self.config, "tickflow_api_key", None))
         if name == "futu":
-            return _truthy(getattr(self.config, "futu_opend_host", None))
+            return _truthy(getattr(self.config, "futu_opend_host", None)) or (
+                _truthy(getattr(self.config, "futu_oauth_client_id", None))
+                and _truthy(getattr(self.config, "futu_oauth_refresh_token", None))
+            )
         if name == "longbridge":
             app_key = getattr(self.config, "longbridge_app_key", None)
             app_secret = getattr(self.config, "longbridge_app_secret", None)
@@ -747,8 +750,16 @@ class DataCapabilityService:
             "warnings": list(warnings),
         }
 
-    @staticmethod
+    def _provider_dataset_markets(self, definition: _ProviderDefinition) -> Mapping[str, Sequence[str]]:
+        if definition.name == "futu" and not _truthy(getattr(self.config, "futu_opend_host", None)) and (
+            _truthy(getattr(self.config, "futu_oauth_client_id", None))
+            and _truthy(getattr(self.config, "futu_oauth_refresh_token", None))
+        ):
+            return {"quote.realtime": ("hk",)}
+        return definition.dataset_markets
+
     def _provider_supports_market_dataset(
+        self,
         provider: str,
         *,
         dataset: str,
@@ -759,14 +770,14 @@ class DataCapabilityService:
         definition = _PROVIDER_DEFINITION_MAP.get(provider)
         if definition is None:
             return True
-        return market in definition.dataset_markets.get(dataset, ())
+        return market in self._provider_dataset_markets(definition).get(dataset, ())
 
     def _fundamental_market_priorities(self) -> Dict[str, Dict[str, Any]]:
+        futu_fetcher = next((item for item in self._fetchers_snapshot() if item.name == "FutuFetcher"), None)
+        opend_available = self._probe_fetcher_available(futu_fetcher, capability="fundamental") is not False
         hk_providers = (
             ["futu", "yfinance"]
-            if self._is_provider_configured(
-                next(item for item in _PROVIDER_DEFINITIONS if item.name == "futu")
-            )
+            if _truthy(getattr(self.config, "futu_opend_host", None)) and opend_available
             else ["yfinance"]
         )
         return {

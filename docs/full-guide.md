@@ -227,7 +227,7 @@ daily_stock_analysis/
 
 ### 5. 完成！
 
-默认每个工作日 **18:00（北京时间）** 自动执行。
+默认每天 **00:00（北京时间）** 触发，分析完成后推送；Actions 排队可能造成延迟。若需每天推送（含休市日），在 Repository Variables 中设置 `TRADING_DAY_CHECK_ENABLED=false`，详见[定时任务配置](#定时任务配置)。
 
 ---
 
@@ -438,6 +438,8 @@ daily_stock_analysis/
 | `TICKFLOW_BATCH_DAILY_ENABLED` | 是否启用 TickFlow 批量日 K 预取；权限不足会短期缓存失败状态，并继续走常规回退。 | `true` | 可选 |
 | `TICKFLOW_BATCH_SIZE` | TickFlow 日 K 与实时行情批量请求的单批最大标的数。 | `100` | 可选 |
 | `FUTU_HK_REALTIME_SOURCE_PRIORITY` | 港股实时行情独立优先级，可选 `futu`、`longbridge`、`akshare`、`yfinance`，按逗号分隔；失败自动回退。 | `futu,longbridge,akshare,yfinance` | 可选 |
+| `FUTU_OAUTH_CLIENT_ID` | 富途云端 OAuth 公共客户端 ID，与 refresh token 成对配置；仅启用港股行情快照，无需常驻 OpenD。 | 空 | 可选 |
+| `FUTU_OAUTH_REFRESH_TOKEN` | 仅授权 `quote:read` 的 refresh token；运行时自动获取短期 access token，仅在进程内缓存。GitHub Actions 仅从同名 Repository Secret 注入。 | 空 | 可选 |
 | `LONGBRIDGE_OAUTH_CLIENT_ID` | Longbridge OAuth client_id；留空且无 Legacy Access Token 时会兼容使用 `LONGBRIDGE_APP_KEY` | - | 可选 |
 | `LONGBRIDGE_OAUTH_TOKEN_CACHE_B64` | OAuth token 缓存文件的 base64 内容，供 GitHub Actions / Docker 等 headless 环境使用 | - | 可选 |
 | `LONGBRIDGE_APP_KEY` | Longbridge Legacy App Key；无 `LONGBRIDGE_ACCESS_TOKEN` 时也可作为 OAuth client_id 兼容别名 | - | 可选 |
@@ -457,6 +459,8 @@ daily_stock_analysis/
 | `FUNDAMENTAL_CACHE_MAX_ENTRIES` | 基本面缓存最大条目数（TTL 内按时间淘汰） | `256` | 可选 |
 
 > 行为说明：
+> - 富途云端快照：参考[官方 OAuth 指南](https://open.futunn.com/zh-cn/api/overview/getting-started)注册客户端并授权 `quote:read`，配置 `FUTU_OAUTH_CLIENT_ID` 和 `FUTU_OAUTH_REFRESH_TOKEN`；两项完整时可在无 OpenD 的 GitHub Actions / Docker 中使用。客户端只调用 token 刷新和行情快照接口，不读取持仓或执行交易；服务端返回更宽的授权时拒绝使用。快照直接读取 `turnover_rate`（百分比）和 `volume_ratio`（倍数），不把日成交量比充当实时量比；Unix 毫秒行情时间转为港股时区，保留真实交易日期。缺失字段保留未知。
+> - 富途云端接入首版仅提供港股快照与名称；日线、财报和资金流不声明为云端已支持，继续使用已有免费源。OpenD 的原有日线、基本面和持仓导入保持原路径。两者都配置时，快照优先使用云端，云端失败后尝试 OpenD；仍失败时回退港股来源链。单个 HTTP 请求设置超时；401 仅刷新重试一次，403、429 或 refresh token 失效不会无限重试。权限不足或授权被撤销时，应在富途重新完成只读授权并更新 Secret；移除这两项配置即可回到原有来源链。
 > - A 股：按 `valuation/growth/earnings/institution/capital_flow/dragon_tiger/boards` 聚合能力返回；
 > - ETF：返回可得项，缺失能力标记为 `not_supported`，整体不影响原流程；
 > - 美股/港股：通过 yfinance 适配器返回 `valuation/growth/earnings/belong_boards`（来源 `info.sector`/`industry`），`institution/capital_flow/dragon_tiger/boards` 暂无对应数据源仍标记 `not_supported`；yfinance 不可用或字段缺失时整体降级回 `not_supported`，仍走 fail-open；
@@ -838,13 +842,18 @@ OpenD 默认地址为 `127.0.0.1:11111`，可用 `FUTU_OPEND_HOST` / `FUTU_OPEND
 ```yaml
 schedule:
   # UTC 时间，北京时间 = UTC + 8
-  - cron: '0 10 * * 1-5'   # 周一到周五 18:00（北京时间）
+  - cron: '0 16 * * *'     # 每天 00:00（北京时间），即前一天 UTC 16:00
 ```
+
+零点触发不等于零点收到邮件：工作流需要排队、安装依赖、抓取数据并完成分析。GitHub 不保证定时任务准时开始，具体限制见 [GitHub schedule 文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。
+
+对于每天零点运行的港股报告，可配置 `STOCK_LIST=hk00700`、`MARKET_REVIEW_REGION=hk`、`REPORT_TYPE=full`，并将 Repository Variable `TRADING_DAY_CHECK_ENABLED` 设为 `false`。过滤按市场本地自然日判断，零点已跨日；保留默认 `true` 可能在周六零点跳过周五收盘后的分析。关闭过滤会在周末、节假日也运行，行情使用最近可用的已完成交易日，新闻仍会刷新，并继续消耗模型及搜索额度；生成时间不能当作行情日期。
 
 常用时间对照：
 
 | 北京时间 | UTC cron 表达式 |
 |---------|----------------|
+| 00:00（每天） | `'0 16 * * *'` |
 | 09:30 | `'30 1 * * 1-5'` |
 | 12:00 | `'0 4 * * 1-5'` |
 | 15:00 | `'0 7 * * 1-5'` |

@@ -989,6 +989,8 @@ class Config:
     tickflow_batch_daily_enabled: bool = True
     tickflow_batch_size: int = 100
     futu_opend_host: Optional[str] = None
+    futu_oauth_client_id: Optional[str] = None
+    futu_oauth_refresh_token: Optional[str] = field(default=None, repr=False)
     futu_opend_port: int = 11111
     futu_hk_realtime_source_priority: str = "futu,longbridge,akshare,yfinance"
     mx_apikey: Optional[str] = None
@@ -1915,6 +1917,8 @@ class Config:
             tickflow_batch_daily_enabled=parse_env_bool(os.getenv('TICKFLOW_BATCH_DAILY_ENABLED'), default=True),
             tickflow_batch_size=parse_env_int(os.getenv('TICKFLOW_BATCH_SIZE'), 100, field_name='TICKFLOW_BATCH_SIZE', minimum=1),
             futu_opend_host=os.getenv('FUTU_OPEND_HOST') or None,
+            futu_oauth_client_id=(os.getenv('FUTU_OAUTH_CLIENT_ID') or '').strip() or None,
+            futu_oauth_refresh_token=(os.getenv('FUTU_OAUTH_REFRESH_TOKEN') or '').strip() or None,
             futu_opend_port=parse_env_int(os.getenv('FUTU_OPEND_PORT'), 11111, field_name='FUTU_OPEND_PORT', minimum=1, maximum=65535),
             futu_hk_realtime_source_priority=os.getenv('FUTU_HK_REALTIME_SOURCE_PRIORITY', 'futu,longbridge,akshare,yfinance'),
             mx_apikey=os.getenv('MX_APIKEY') or None,
@@ -3252,6 +3256,13 @@ class Config:
             primary environment variable / field name it relates to.
         """
         issues: List[ConfigIssue] = []
+
+        if bool(self.futu_oauth_client_id) != bool(self.futu_oauth_refresh_token):
+            issues.append(ConfigIssue(
+                severity="warning",
+                message="富途云端行情需同时配置 FUTU_OAUTH_CLIENT_ID 和 FUTU_OAUTH_REFRESH_TOKEN；当前未启用 OAuth 行情。",
+                field="FUTU_OAUTH_REFRESH_TOKEN" if self.futu_oauth_client_id else "FUTU_OAUTH_CLIENT_ID",
+            ))
 
         # --- Stock list ---
         if not self.stock_list:

@@ -152,7 +152,7 @@ Open the `Actions` tab and click `I understand my workflows, go ahead and enable
 
 #### Done
 
-By default, the workflow runs every weekday at 18:00 Beijing time and skips non-trading days. Forced runs, trading-day checks, and resume rules are covered in the [Full Guide](./full-guide_EN.md#scheduled-task-configuration).
+By default, the workflow is scheduled daily at 00:00 Beijing time. Email is sent after analysis finishes; Actions queues may delay delivery. Trading-day filtering remains enabled by default. For delivery every day, including market holidays, set the Repository Variable `TRADING_DAY_CHECK_ENABLED=false`. Midnight runs, forced runs, and resume rules are covered in the [Full Guide](./full-guide_EN.md#scheduled-task-configuration).
 
 ### Option 2: Local / Docker Deployment
 

@@ -1868,8 +1868,8 @@ class DataFetcherManager:
         else:
             logger.debug("[数据源初始化] 跳过未配置的 LongbridgeFetcher")
 
-        if FutuFetcher.has_configured_endpoint():
-            optional_fetchers.append(FutuFetcher())  # 富途（港股，依赖 OpenD）
+        if FutuFetcher.has_configured_endpoint() or FutuFetcher.has_configured_http_credentials():
+            optional_fetchers.append(FutuFetcher())  # 富途：云端快照或 OpenD
         else:
             logger.debug("[数据源初始化] 跳过未配置的 FutuFetcher")
 
@@ -2531,7 +2531,7 @@ class DataFetcherManager:
                 primary_token = None
                 primary_src_index = -1
                 fallback_from = None
-                # Futu only participates when an OpenD endpoint is configured.
+                # Futu participates with cloud OAuth credentials or an OpenD endpoint.
                 # Skipping an unconfigured source here (instead of letting
                 # _try_fetcher_quote fail on it) avoids recording a never-enabled
                 # source as the failed primary, which would wrongly mark a
@@ -2539,7 +2539,9 @@ class DataFetcherManager:
                 futu_enabled = False
                 try:
                     from data_provider.futu_fetcher import FutuFetcher
-                    futu_enabled = FutuFetcher.has_configured_endpoint()
+                    futu_enabled = (
+                        FutuFetcher.has_configured_endpoint() or FutuFetcher.has_configured_http_credentials()
+                    )
                 except Exception:  # noqa: BLE001 - fail closed: treat futu as disabled
                     futu_enabled = False
                 for index, source in enumerate(hk_priority):
@@ -2550,7 +2552,7 @@ class DataFetcherManager:
                     fetcher_name, fetcher_kw = mapped
                     if fetcher_name == "FutuFetcher" and not futu_enabled:
                         logger.info(
-                            "[实时行情] 港股 %s 未配置 FUTU_OPEND_HOST，跳过 futu 源", stock_code
+                            "[实时行情] 港股 %s 未配置富途 OAuth 或 OpenD，跳过 futu 源", stock_code
                         )
                         continue
                     quote = self._try_fetcher_quote(stock_code, fetcher_name, **fetcher_kw, **target_kwargs)

@@ -236,6 +236,39 @@ def test_hk_realtime_priority_skips_futu_when_opend_is_unconfigured() -> None:
     assert "futu" not in hk_quality["fallback_from"]
 
 
+def test_cloud_futu_only_advertises_quote_capability_and_never_serializes_token() -> None:
+    service = DataCapabilityService(
+        config=_config(futu_oauth_client_id="cloud-client", futu_oauth_refresh_token="private-refresh"),
+        fetcher_manager=_FetcherManager([
+            _Fetcher("FutuFetcher", 2, is_available_for_request=True),
+            _Fetcher("YfinanceFetcher", 4, available=True),
+        ]),
+    )
+    overview = service.get_overview()
+    provider = _provider(overview, "futu")
+    assert provider["configured"]
+    assert provider["dataset_markets"] == {"quote.realtime": ["hk"]}
+    assert "private-refresh" not in json.dumps(overview)
+    priorities = {item["scenario"]: item for item in overview["priorities"]}
+    assert priorities["hk.realtime"]["providers"][0] == "futu"
+    financial = _dataset(overview, "financial.snapshot")["coverage"]["markets"]["hk"]
+    assert financial["source"] == "yfinance"
+    assert "futu" not in financial["fallback_from"]
+
+
+def test_cloud_quote_availability_does_not_mask_unavailable_opend_fundamentals() -> None:
+    futu = _Fetcher("FutuFetcher", 2)
+    futu.is_available_for_request = lambda capability="": capability in {"", "realtime", "stock_name"}
+    service = DataCapabilityService(
+        config=_config(futu_opend_host="127.0.0.1", futu_oauth_client_id="cloud-client",
+                       futu_oauth_refresh_token="private-refresh"),
+        fetcher_manager=_FetcherManager([futu, _Fetcher("YfinanceFetcher", 4, available=True)]),
+    )
+    overview = service.get_overview()
+    assert _provider(overview, "futu")["status"] == "ok"
+    assert _dataset(overview, "financial.snapshot")["coverage"]["markets"]["hk"]["source"] == "yfinance"
+
+
 def test_realtime_dataset_quality_is_market_aware() -> None:
     manager = _FetcherManager([
         _Fetcher("EfinanceFetcher", 0, available=True),

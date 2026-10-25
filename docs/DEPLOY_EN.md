@@ -436,18 +436,19 @@ git push
 
 ### Schedule Details
 
-Default configuration: **Monday to Friday, 18:00 Beijing Time** auto-execution
+Default configuration: scheduled **daily at 00:00 Beijing time**, with notifications sent after analysis finishes. Actions queues may delay delivery. Trading-day filtering remains enabled by default; set the Repository Variable `TRADING_DAY_CHECK_ENABLED=false` for delivery every day, including holidays. See the [Full Guide](full-guide_EN.md#scheduled-task-configuration) for midnight date boundaries.
 
 Modify time: Edit cron expression in `.github/workflows/00-daily-analysis.yml`:
 
 ```yaml
 schedule:
-  - cron: '0 10 * * 1-5'  # UTC time, +8 = Beijing time
+  - cron: '0 16 * * *'  # Previous day 16:00 UTC = daily 00:00 Beijing time
 ```
 
 Common cron examples:
 | Expression | Description |
 |--------|------|
+| `'0 16 * * *'` | Daily 00:00 (Beijing) |
 | `'0 10 * * 1-5'` | Mon-Fri 18:00 (Beijing) |
 | `'30 7 * * 1-5'` | Mon-Fri 15:30 (Beijing) |
 | `'0 10 * * *'` | Daily 18:00 (Beijing) |

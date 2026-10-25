@@ -152,7 +152,7 @@
 
 #### 完成
 
-預設每個工作日 18:00（北京時間）自動執行，也可手動觸發。預設非交易日（含 A/H/US 節假日）不執行；強制運行、交易日檢查、斷點續傳等規則見 [完整指南](./full-guide.md#定时任务配置)。
+預設每天 **00:00（北京時間）**觸發，也可手動執行；郵件在分析完成後傳送，Actions 排隊可能導致延遲。交易日過濾預設開啟；如需每天推送（含休市日），設定 Repository Variable `TRADING_DAY_CHECK_ENABLED=false`。跨日分析、強制執行和斷點續傳等規則見 [完整指南](./full-guide.md#定时任务配置)。
 
 ### 方式二：[客戶端配置教程](https://www.bilibili.com/video/BV11FEb66Eyr/) / 本地運行 / Docker 部署
 

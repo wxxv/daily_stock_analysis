@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Futu OpenD market-data fetcher.
+"""Futu OpenD market data and optional cloud OAuth quote snapshots.
 
 Read-only HK quote and daily-candlestick adapter for DSA.  Trading APIs are
 intentionally not imported or exposed here.
@@ -14,6 +14,7 @@ from typing import Any, Optional
 import pandas as pd
 
 from .base import BaseFetcher, STANDARD_COLUMNS
+from .futu_quote_client import FutuQuoteClient, FutuQuoteError
 from .realtime_types import RealtimeSource, UnifiedRealtimeQuote, safe_float
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,13 @@ def _hk_provider_timestamp(value: Any) -> Optional[str]:
     """Normalize Futu snapshot update_time to an offset-aware ISO string."""
     if value in (None, ""):
         return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            if value <= 0:
+                return None
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc).astimezone(_HK_UPDATE_TIME_OFFSET).isoformat()
+        except (ValueError, OverflowError, OSError):
+            return None
     text = str(value).strip()
     if not text:
         return None
@@ -57,7 +65,7 @@ def _hk_symbol(stock_code: str) -> Optional[str]:
 
 
 class FutuFetcher(BaseFetcher):
-    """Futu OpenD adapter for DSA's existing provider contract."""
+    """Reuse DSA's Futu quote contract with either cloud OAuth or OpenD."""
 
     name = "FutuFetcher"
     priority = int(os.getenv("FUTU_PRIORITY", "2"))
@@ -80,6 +88,20 @@ class FutuFetcher(BaseFetcher):
             self._port = int(getattr(config, "futu_opend_port", None) or env_port or 11111)
         except (TypeError, ValueError):
             self._port = 11111
+        client_id = (getattr(config, "futu_oauth_client_id", None) or os.getenv("FUTU_OAUTH_CLIENT_ID") or "").strip()
+        refresh_token = (getattr(config, "futu_oauth_refresh_token", None) or os.getenv("FUTU_OAUTH_REFRESH_TOKEN") or "").strip()
+        self._http_client = FutuQuoteClient(client_id, refresh_token) if client_id and refresh_token else None
+
+    @staticmethod
+    def has_configured_http_credentials() -> bool:
+        try:
+            from src.config import get_config
+            config = get_config()
+        except Exception:
+            config = None
+        client_id = (getattr(config, "futu_oauth_client_id", None) or os.getenv("FUTU_OAUTH_CLIENT_ID") or "").strip()
+        refresh_token = (getattr(config, "futu_oauth_refresh_token", None) or os.getenv("FUTU_OAUTH_REFRESH_TOKEN") or "").strip()
+        return bool(client_id and refresh_token)
 
     @staticmethod
     def has_configured_endpoint() -> bool:
@@ -92,8 +114,14 @@ class FutuFetcher(BaseFetcher):
             return False
 
     def _is_available(self) -> bool:
+        return self._http_client is not None or self._is_opend_available()
+
+    def _is_opend_available(self) -> bool:
         if self._available is not None:
             return self._available
+        if not self.has_configured_endpoint():
+            self._available = False
+            return False
         try:
             import futu  # noqa: F401
             self._available = self.has_configured_endpoint()
@@ -103,10 +131,12 @@ class FutuFetcher(BaseFetcher):
         return self._available
 
     def is_available_for_request(self, capability: str = "") -> bool:
-        return self._is_available()
+        if capability in {"", "realtime", "realtime_quote", "stock_name"}:
+            return self._is_available()
+        return self._is_opend_available()
 
     def _get_ctx(self):
-        if not self._is_available():
+        if not self._is_opend_available():
             return None
         if self._ctx is not None:
             return self._ctx
@@ -130,13 +160,12 @@ class FutuFetcher(BaseFetcher):
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
         symbol = _hk_symbol(stock_code)
-        ctx = self._get_ctx()
-        if not symbol or ctx is None:
+        if not symbol:
             return None
         try:
-            ret, data = ctx.get_market_snapshot([symbol])
-            if ret == 0 and data is not None and not data.empty:
-                return str(data.iloc[0].get("name") or "").strip() or None
+            row = self._get_snapshot(symbol)
+            if row is not None:
+                return str(row.get("sc_name") or row.get("name") or "").strip() or None
         except Exception as exc:
             logger.debug("[Futu] stock name failed(%s): %s", symbol, exc)
         return None
@@ -264,31 +293,49 @@ class FutuFetcher(BaseFetcher):
             return None
 
     def close(self) -> None:
+        if self._http_client is not None:
+            self._http_client.close()
         if self._ctx is not None:
             self._close_ctx(self._ctx)
             self._ctx = None
 
+    def _get_snapshot(self, symbol: str):
+        if self._http_client is not None:
+            try:
+                return self._http_client.get_snapshot(symbol)
+            except FutuQuoteError as exc:
+                logger.warning("[Futu] cloud snapshot failed(%s): %s", symbol, exc)
+                if not self.has_configured_endpoint():
+                    return None
+        ctx = self._get_ctx()
+        if ctx is None:
+            return None
+        ret, rows = ctx.get_market_snapshot([symbol])
+        if ret != 0 or rows is None or rows.empty:
+            return None
+        return rows.iloc[0]
+
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         symbol = _hk_symbol(stock_code)
-        ctx = self._get_ctx()
-        if not symbol or ctx is None:
+        if not symbol:
             return None
         try:
-            ret, rows = ctx.get_market_snapshot([symbol])
-            if ret != 0 or rows is None or rows.empty:
+            q = self._get_snapshot(symbol)
+            if q is None:
                 return None
-            q = rows.iloc[0]
             price = safe_float(q.get("last_price"))
             if price is None or price <= 0:
                 return None
             prev = safe_float(q.get("prev_close_price"))
             change_pct = safe_float(q.get("change_rate"))
+            if change_pct is None and prev is not None and prev > 0:
+                change_pct = (price / prev - 1) * 100
             volume = int(q.get("volume") or 0)
             turnover = safe_float(q.get("turnover"))
             turnover_rate = safe_float(q.get("turnover_rate"))
             return UnifiedRealtimeQuote(
                 code=stock_code,
-                name=str(q.get("name") or ""),
+                name=str(q.get("sc_name") or q.get("name") or ""),
                 source=RealtimeSource.FUTU,
                 price=price,
                 change_pct=change_pct,

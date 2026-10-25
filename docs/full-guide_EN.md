@@ -200,7 +200,7 @@ To get started quickly, you need at minimum:
 
 ### 5. Done!
 
-Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
+The workflow is scheduled daily at **00:00 (Beijing Time)** and sends notifications after analysis finishes. Actions queues may delay delivery. Set the Repository Variable `TRADING_DAY_CHECK_ENABLED=false` for delivery every day, including market holidays; see [Scheduled Task Configuration](#scheduled-task-configuration).
 
 ---
 
@@ -375,9 +375,11 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 | `TICKFLOW_KLINE_ADJUST` | TickFlow daily K-line adjustment mode: `none`, `forward`, `backward`, `forward_additive`, or `backward_additive`. | `none` | Optional |
 | `TICKFLOW_BATCH_DAILY_ENABLED` | Enable TickFlow batch daily K-line prefetch when the current plan supports it; permission failures are negative-cached and fall back to per-stock providers. | `true` | Optional |
 | `TICKFLOW_BATCH_SIZE` | Maximum symbols per TickFlow batch request. | `100` | Optional |
-| `FUTU_OPEND_HOST` | Futu OpenD address; use an IPv4 address or an IPv4-resolvable hostname. Leave empty to disable Futu market data. | empty | Optional |
+| `FUTU_OPEND_HOST` | Futu OpenD address; use an IPv4 address or an IPv4-resolvable hostname. Leave empty to disable OpenD; cloud OAuth quotes are configured separately. | empty | Optional |
 | `FUTU_OPEND_PORT` | Futu OpenD TCP port, from `1` to `65535`. | `11111` | Optional |
 | `FUTU_HK_REALTIME_SOURCE_PRIORITY` | HK realtime source order: `futu`, `longbridge`, `akshare`, or `yfinance`, comma-separated. Failed sources fall back automatically. | `futu,longbridge,akshare,yfinance` | Optional |
+| `FUTU_OAUTH_CLIENT_ID` | Futu cloud OAuth public client ID. Configure together with its refresh token for HK snapshots without a persistent OpenD gateway. | empty | Optional |
+| `FUTU_OAUTH_REFRESH_TOKEN` | Refresh token from a `quote:read`-only grant. Short-lived access tokens are refreshed and cached in memory. Actions reads this value only from the matching Repository Secret. | empty | Optional |
 | `ENABLE_REALTIME_QUOTE` | Enable real-time quotes (if disabled, uses historical closing prices for analysis) | `true` | Optional |
 | `ENABLE_REALTIME_TECHNICAL_INDICATORS` | Intraday real-time technicals: Calculate MA5/MA10/MA20 and bull trends using real-time prices when enabled (Issue #234); uses yesterday's close if disabled. | `true` | Optional |
 | `ENABLE_CHIP_DISTRIBUTION` | Enable chip distribution analysis (this API is unstable, recommended to disable for cloud deployment). GitHub Actions users must set `ENABLE_CHIP_DISTRIBUTION=true` in Repository Variables to enable; disabled by default in workflows. | `true` | Optional |
@@ -414,6 +416,10 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 > - **Timeout control** is a `best-effort` soft timeout: the stage will quickly degrade and continue execution based on the budget, but does not guarantee a hard interrupt of underlying third-party network calls.
 > - `FUNDAMENTAL_STAGE_TIMEOUT_SECONDS=8.0` indicates the target budget for the newly added fundamental stage, not a strict hard SLA; Windows, Docker, or rate-limited free data sources can raise it to `12-15s`.
 > - For a hard SLA, please upgrade to isolated child process execution in future versions to forcefully terminate timeout tasks.
+
+Futu cloud snapshots use the [official OAuth flow](https://open.futunn.com/api/overview/getting-started) with `quote:read` only. Configure both `FUTU_OAUTH_CLIENT_ID` and `FUTU_OAUTH_REFRESH_TOKEN`; Actions stores the refresh token in a Repository Secret. The client calls only token refresh and snapshot endpoints, rejects broader grants, caches access tokens in memory, and retries a snapshot only once after HTTP 401. HTTP 403/429 or a revoked refresh token falls back to the existing HK source chain. Reauthorize and replace the Secret if the grant is revoked.
+
+This cloud integration provides HK snapshots and names only; daily bars, statements, and capital flow remain on the existing sources. OpenD keeps its original capabilities. When both are configured, snapshots try cloud first, then OpenD. Turnover rate is returned in percent, volume ratio in multiples, and millisecond timestamps retain the actual market data time; missing fields stay unknown. Remove the OAuth pair to restore the previous source chain.
 
 ### Other Configuration
 
@@ -779,8 +785,12 @@ Edit `.github/workflows/00-daily-analysis.yml`:
 ```yaml
 schedule:
   # UTC time, Beijing time = UTC + 8
-  - cron: '0 10 * * 1-5'   # Monday to Friday 18:00 (Beijing Time)
+  - cron: '0 16 * * *'     # Daily 00:00 Beijing time = previous day 16:00 UTC
 ```
+
+Midnight is the scheduled start, not a guaranteed email delivery time. Queueing, dependency installation, data collection, and analysis take time; see the [GitHub schedule documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+For a daily midnight Hong Kong report, use `STOCK_LIST=hk00700`, `MARKET_REVIEW_REGION=hk`, `REPORT_TYPE=full`, and Repository Variable `TRADING_DAY_CHECK_ENABLED=false`. The filter checks the current market-local calendar date, so leaving it enabled can skip Friday's recap at Saturday midnight. Disabling it also runs on weekends and holidays, using the latest available completed trading session while refreshing news, and consumes model and search quotas. Report generation time is distinct from the quote or daily-bar date.
 
 Common time reference:
 
